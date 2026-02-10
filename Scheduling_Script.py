@@ -32,6 +32,7 @@ DATA = [
 ]
 
 SHOW_LEN = 20  # minutes
+BREAK_LEN = 10  # minutes break between different activities in same pod
 START_HOUR = time(9, 0)
 END_HOUR = time(17, 0)
 STEP_MIN = 5  # 5-min grid like your current output
@@ -57,9 +58,6 @@ def minutes(t: time) -> int:
 def time_from_minutes(m: int) -> time:
     return time(m // 60, m % 60)
 
-def overlap(a: int, b: int, dur: int) -> bool:
-    return not (a + dur <= b or b + dur <= a)
-
 def candidate_starts(step=STEP_MIN):
     start_m = minutes(START_HOUR)
     last_start = minutes(END_HOUR) - SHOW_LEN
@@ -73,25 +71,47 @@ CANDIDATE_STARTS = candidate_starts()
 # Shared-ops constraint: pods in same ops_group cannot share the same start time
 ops_used_starts = {}  # (day_key, ops_group) -> set(start_min)
 
-# Pod overlap constraint: a pod cannot have overlapping shows
-pod_bookings = {}     # (day_key, pod) -> list(start_min)
+# Track all bookings with their details
+# Format: (day_key, pod, start_min) -> (course, mod_act, end_min)
+all_bookings = {}
 
 # Soft balancing: spread usage across pods (tie-breaker)
 pod_usage_count = {p["pod"]: 0 for p in PODS}
 
-def can_place(day_key: str, pod: str, ops_group: str, start_min: int) -> bool:
+def can_place(day_key: str, pod: str, ops_group: str, start_min: int, course: str, mod_act: str) -> bool:
     # ops-team: no same start time within group
     if start_min in ops_used_starts.get((day_key, ops_group), set()):
         return False
-    # pod: no overlap within same pod
-    for s in pod_bookings.get((day_key, pod), []):
-        if overlap(s, start_min, SHOW_LEN):
-            return False
+    
+    end_min = start_min + SHOW_LEN
+    
+    # Check against all existing bookings in the same pod
+    for (d, p, existing_start), details in all_bookings.items():
+        if d == day_key and p == pod:
+            existing_course, existing_mod_act, existing_end = details
+            
+            # Check if same activity (same course AND same mod/act)
+            same_activity = (existing_course == course and existing_mod_act == mod_act)
+            
+            if same_activity:
+                # Same activity: just check for overlap
+                if not (end_min <= existing_start or start_min >= existing_end):
+                    return False
+            else:
+                # Different activity: need 10-minute break
+                # Check if new show starts within 10 mins after existing show ends
+                if start_min < existing_end + BREAK_LEN and end_min > existing_start:
+                    return False
+                # Check if existing show starts within 10 mins after new show ends
+                if existing_start < end_min + BREAK_LEN and existing_end > start_min:
+                    return False
+    
     return True
 
-def place(day_key: str, pod: str, ops_group: str, start_min: int):
+def place(day_key: str, pod: str, ops_group: str, start_min: int, course: str, mod_act: str):
+    end_min = start_min + SHOW_LEN
     ops_used_starts.setdefault((day_key, ops_group), set()).add(start_min)
-    pod_bookings.setdefault((day_key, pod), []).append(start_min)
+    all_bookings[(day_key, pod, start_min)] = (course, mod_act, end_min)
     pod_usage_count[pod] += 1
 
 def pods_sorted_for_slot():
@@ -111,15 +131,10 @@ windows = (
 ).sort_values(["close_date", "open_date"]).reset_index(drop=True)
 
 # -----------------------------
-# STRICT CLOSE-DATE-FIRST SCHEDULER
+# MAIN SCHEDULING LOOP
 # -----------------------------
 schedule_rows = []
 summary_rows = []
-
-# time order within a day: late -> early, so we fill end-of-day first,
-# but we WILL use 9am before going to an earlier date.
-# time_order = list(reversed(CANDIDATE_STARTS))
-time_order = CANDIDATE_STARTS  # early -> late
 
 for _, w in windows.iterrows():
     course = w["Course"]
@@ -134,37 +149,33 @@ for _, w in windows.iterrows():
     if not days:
         raise ValueError(f"No business days in window for ({course}, {mod}).")
 
-    # STRICT date preference: close -> open
-    # days_desc = list(reversed(days))
-    days_desc = list(days)
-
     total_capacity = 0
     shows_for_pair = 0
-
-    # Iterate slots in strict priority order: (close date, late time) ... (open date, early time)
-    for d in days_desc:
+    
+    # Try each day in order
+    for d in days:
         if total_capacity >= seats_required:
             break
-
+            
         day_key = d.strftime("%Y-%m-%d")
-
-        for start_min in time_order:
+        
+        # Try each time slot
+        for start_min in CANDIDATE_STARTS:
             if total_capacity >= seats_required:
                 break
-
-            # TIME IS FIXED HERE. Try pods first; don't change time unless no pod works.
-            placed_one = False
+            
+            # Try each pod
             for podinfo in pods_sorted_for_slot():
                 pod = podinfo["pod"]
                 cap = podinfo["capacity"]
                 grp = podinfo["ops_group"]
-
-                if can_place(day_key, pod, grp, start_min):
-                    place(day_key, pod, grp, start_min)
-
+                
+                if can_place(day_key, pod, grp, start_min, course, mod):
+                    place(day_key, pod, grp, start_min, course, mod)
+                    
                     start_t = time_from_minutes(start_min)
                     end_t = time_from_minutes(start_min + SHOW_LEN)
-
+                    
                     schedule_rows.append({
                         "Course": course,
                         "Mod/Act": mod,
@@ -174,20 +185,17 @@ for _, w in windows.iterrows():
                         "Pod": pod,
                         "Pod Capacity": cap,
                     })
-
+                    
                     total_capacity += cap
                     shows_for_pair += 1
-                    placed_one = True
-                    break
-
-            # If no pod worked at this time, move to next time (still same day)
-
+                    break  # Found a pod for this time slot
+    
     if total_capacity < seats_required:
         raise ValueError(
             f"Not enough capacity to schedule ({course}, {mod}) within {open_dt.date()}..{close_dt.date()} "
-            f"under current constraints."
+            f"under current constraints. Could only schedule {total_capacity} of {seats_required} seats."
         )
-
+    
     summary_rows.append({
         "Course": course,
         "Mod/Act": mod,
@@ -225,3 +233,5 @@ for (course, mod), group in schedule_df_sorted.groupby(["Course", "Mod/Act"]):
 # Optional exports:
 schedule_df.to_csv("show_schedule.csv", index=False)
 summary_df.to_csv("show_summary.csv", index=False)
+
+print(f"\n✅ Successfully scheduled {len(schedule_rows)} shows with 10-minute breaks between different activities.")

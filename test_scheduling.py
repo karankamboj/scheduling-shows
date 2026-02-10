@@ -3,6 +3,7 @@ from Scheduling_Script import schedule_df
 import pandas as pd
 
 SHOW_LEN_MIN = 20
+BREAK_LEN_MIN = 10  # 10-minute break between different mod/acts
 
 WORK_START_MIN = 9 * 60      # 09:00
 WORK_END_MIN = 17 * 60       # 17:00
@@ -144,6 +145,8 @@ def test_show_runtime_20min(schedule_df: pd.DataFrame):
         "Shows with non-20-min duration:\n"
         + bad[["Course","Mod/Act","Date","Pod","Start","End"]].to_string(index=False)
     )
+
+
 def test_weekdays_only(schedule_df: pd.DataFrame):
     """
     Dates must be Mon–Fri (no Sat/Sun).
@@ -157,6 +160,7 @@ def test_weekdays_only(schedule_df: pd.DataFrame):
         "Found shows scheduled on weekend:\n"
         + weekend[["Course","Mod/Act","Date","Start","End","Pod"]].to_string(index=False)
     )
+
 
 def test_within_working_hours(schedule_df: pd.DataFrame):
     """
@@ -176,6 +180,61 @@ def test_within_working_hours(schedule_df: pd.DataFrame):
         + bad[["Course","Mod/Act","Date","Start","End","Pod"]].to_string(index=False)
     )
 
+
+def test_break_between_different_mod_acts(schedule_df: pd.DataFrame):
+    """
+    7) Test that shows in the same pod have at least 10-minute break 
+    between them when they are for different modules/activities.
+    """
+    df = _prep(schedule_df)
+    
+    violations = []
+    for (date, pod), g in df.groupby(["Date", "Pod"]):
+        g = g.sort_values("Start_min")
+        for i in range(len(g) - 1):
+            current_row = g.iloc[i]
+            next_row = g.iloc[i + 1]
+            
+            # Check if same course and module/activity
+            same_course = current_row["Course"] == next_row["Course"]
+            same_mod_act = current_row["Mod/Act"] == next_row["Mod/Act"]
+            same_activity = same_course and same_mod_act
+            
+            if not same_activity:
+                # Different activity - need at least 10 min break
+                time_between = next_row["Start_min"] - current_row["End_min"]
+                if time_between < BREAK_LEN_MIN:
+                    violations.append((
+                        date, pod,
+                        current_row["Course"], current_row["Mod/Act"],
+                        current_row["Start"], current_row["End"],
+                        next_row["Course"], next_row["Mod/Act"],
+                        next_row["Start"], next_row["End"],
+                        f"Only {time_between} min between different activities"
+                    ))
+            else:
+                # Same activity - can be back-to-back (no break needed)
+                # Just ensure they don't overlap
+                time_between = next_row["Start_min"] - current_row["End_min"]
+                if time_between < 0:
+                    violations.append((
+                        date, pod,
+                        current_row["Course"], current_row["Mod/Act"],
+                        current_row["Start"], current_row["End"],
+                        next_row["Course"], next_row["Mod/Act"],
+                        next_row["Start"], next_row["End"],
+                        f"Overlap of {abs(time_between)} min for same activity"
+                    ))
+    
+    assert not violations, (
+        "Break requirement violations in same pod:\n"
+        + "\n".join([f"Date: {v[0]}, Pod: {v[1]}, "
+                     f"First: {v[2]} {v[3]} ({v[4]}-{v[5]}), "
+                     f"Second: {v[6]} {v[7]} ({v[8]}-{v[9]}), "
+                     f"Issue: {v[10]}" for v in violations[:20]])
+    )
+
+
 def run_all_tests(schedule_df: pd.DataFrame):
     test_capacity(schedule_df)
     test_no_overlap_of_pods(schedule_df)
@@ -183,6 +242,8 @@ def run_all_tests(schedule_df: pd.DataFrame):
     test_show_runtime_20min(schedule_df)
     test_within_working_hours(schedule_df)
     test_weekdays_only(schedule_df)
+    test_break_between_different_mod_acts(schedule_df)
     print("✅ All constraint tests passed!")
+
 
 run_all_tests(schedule_df)
