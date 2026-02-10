@@ -1,7 +1,17 @@
 from Scheduling_Script import schedule_df
 import pandas as pd
 
-SHOW_LEN_MIN = 20
+# Show durations mapping based on course prefix
+SHOW_LENGTH_MAP = {
+    "Bio": 30,      # Bio -> 30 mins
+    "CHM": 30,      # Chm -> 30 mins  
+    "Astronomy": 30, # Astronomy -> 30 mins
+    "Art": 30,      # Art -> 30 mins
+    "Scm": 20,      # Scm -> 20 mins
+    # Default will be 20 minutes
+}
+
+DEFAULT_SHOW_LEN = 20  # minutes for courses not in the map
 BREAK_LEN_MIN = 10  # 10-minute break between different mod/acts
 
 WORK_START_MIN = 9 * 60      # 09:00
@@ -53,11 +63,21 @@ def _prep(schedule_df: pd.DataFrame) -> pd.DataFrame:
     df["Start_min"] = df["Start_dt"].dt.hour * 60 + df["Start_dt"].dt.minute
     df["End_min"] = df["End_dt"].dt.hour * 60 + df["End_dt"].dt.minute
     
+    # Calculate show length
+    df["Show Length"] = df["End_min"] - df["Start_min"]
+    
     # Add day of week (0=Monday, 4=Friday)
     df["DayOfWeek"] = df["Date"].dt.weekday
 
     return df
 
+def get_expected_show_length(course: str) -> int:
+    """Determine expected show length based on course prefix mapping."""
+    # Extract the first word (prefix) from the course name
+    prefix = course.split()[0] if course else ""
+    
+    # Look up in the mapping, return default if not found
+    return SHOW_LENGTH_MAP.get(prefix, DEFAULT_SHOW_LEN)
 
 def test_capacity(schedule_df: pd.DataFrame):
     """
@@ -147,16 +167,27 @@ def test_ops_team_start_end_uniqueness(schedule_df: pd.DataFrame):
             raise AssertionError(f"Duplicate END time in ops group {grp} on {date}:\n{dup.to_string(index=False)}")
 
 
-def test_show_runtime_20min(schedule_df: pd.DataFrame):
+def test_show_runtime_correctness(schedule_df: pd.DataFrame):
     """
-    4) Every show must be exactly 20 minutes.
+    4) Every show must have the correct duration based on course prefix mapping.
     """
     df = _prep(schedule_df)
 
-    bad = df[(df["End_min"] - df["Start_min"]) != SHOW_LEN_MIN]
-    assert bad.empty, (
-        "Shows with non-20-min duration:\n"
-        + bad[["Course","Mod/Act","Date_only","Pod","Start","End"]].to_string(index=False)
+    violations = []
+    for _, row in df.iterrows():
+        expected_len = get_expected_show_length(row["Course"])
+        actual_len = row["Show Length"]
+        
+        if actual_len != expected_len:
+            violations.append((
+                row["Date_only"], row["Pod"], row["Course"], row["Mod/Act"],
+                row["Start"], row["End"], f"Expected {expected_len} min, got {actual_len} min"
+            ))
+    
+    assert not violations, (
+        "Shows with incorrect duration:\n"
+        + "\n".join([f"Date: {v[0]}, Pod: {v[1]}, Course: {v[2]}, Mod/Act: {v[3]}, "
+                     f"Time: {v[4]}-{v[5]}, Issue: {v[6]}" for v in violations])
     )
 
 
@@ -286,7 +317,7 @@ def run_all_tests(schedule_df: pd.DataFrame):
     test_capacity(schedule_df)
     test_no_overlap_of_pods(schedule_df)
     test_ops_team_start_end_uniqueness(schedule_df)
-    test_show_runtime_20min(schedule_df)
+    test_show_runtime_correctness(schedule_df)
     test_within_working_hours(schedule_df)
     test_weekdays_only(schedule_df)
     test_no_shows_on_holidays(schedule_df)

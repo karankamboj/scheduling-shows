@@ -31,7 +31,17 @@ DATA = [
     ("CHM 114", "CHM M1 A1", "Monday, February 2, 2026", "Wednesday, February 11, 2026"),
 ]
 
-SHOW_LEN = 20  # minutes
+# Show durations mapping based on course prefix
+SHOW_LENGTH_MAP = {
+    "Bio": 30,      # Bio -> 30 mins
+    "CHM": 30,      # Chm -> 30 mins  
+    "Astronomy": 30, # Astronomy -> 30 mins
+    "Art": 30,      # Art -> 30 mins
+    "Scm": 20,      # Scm -> 20 mins
+    # Default will be 20 minutes
+}
+
+DEFAULT_SHOW_LEN = 20  # minutes for courses not in the map
 BREAK_LEN = 10  # minutes break between different activities in same pod
 START_HOUR = time(9, 0)
 END_HOUR_REGULAR = time(17, 0)  # Regular closing time (Mon-Thu)
@@ -58,6 +68,14 @@ def is_holiday(date: datetime) -> bool:
     """Check if a date is a holiday."""
     return date.date() in HOLIDAYS
 
+def get_show_length(course: str) -> int:
+    """Determine show length based on course prefix mapping."""
+    # Extract the first word (prefix) from the course name
+    prefix = course.split()[0] if course else ""
+    
+    # Look up in the mapping, return default if not found
+    return SHOW_LENGTH_MAP.get(prefix, DEFAULT_SHOW_LEN)
+
 def business_days_inclusive(start: datetime, end: datetime):
     """Get business days (Mon-Fri) excluding holidays."""
     days = []
@@ -81,11 +99,11 @@ def get_end_hour_for_date(date: datetime) -> time:
     else:
         return END_HOUR_REGULAR
 
-def candidate_starts_for_date(date: datetime, step=STEP_MIN):
-    """Generate candidate start times based on day of week."""
+def candidate_starts_for_date(date: datetime, show_len: int, step=STEP_MIN):
+    """Generate candidate start times based on day of week and show length."""
     start_m = minutes(START_HOUR)
     end_hour = get_end_hour_for_date(date)
-    last_start = minutes(end_hour) - SHOW_LEN
+    last_start = minutes(end_hour) - show_len
     return list(range(start_m, last_start + 1, step))
 
 # -----------------------------
@@ -95,18 +113,18 @@ def candidate_starts_for_date(date: datetime, step=STEP_MIN):
 ops_used_starts = {}  # (day_key, ops_group) -> set(start_min)
 
 # Track all bookings with their details
-# Format: (day_key, pod, start_min) -> (course, mod_act, end_min)
+# Format: (day_key, pod, start_min) -> (course, mod_act, end_min, show_len)
 all_bookings = {}
 
 # Soft balancing: spread usage across pods (tie-breaker)
 pod_usage_count = {p["pod"]: 0 for p in PODS}
 
-def can_place(day_key: str, pod: str, ops_group: str, start_min: int, course: str, mod_act: str, date_obj: datetime) -> bool:
+def can_place(day_key: str, pod: str, ops_group: str, start_min: int, course: str, mod_act: str, date_obj: datetime, show_len: int) -> bool:
     # ops-team: no same start time within group
     if start_min in ops_used_starts.get((day_key, ops_group), set()):
         return False
     
-    end_min = start_min + SHOW_LEN
+    end_min = start_min + show_len
     
     # Check if show would end after closing time
     end_hour = get_end_hour_for_date(date_obj)
@@ -116,7 +134,7 @@ def can_place(day_key: str, pod: str, ops_group: str, start_min: int, course: st
     # Check against all existing bookings in the same pod
     for (d, p, existing_start), details in all_bookings.items():
         if d == day_key and p == pod:
-            existing_course, existing_mod_act, existing_end = details
+            existing_course, existing_mod_act, existing_end, existing_len = details
             
             # Check if same activity (same course AND same mod/act)
             same_activity = (existing_course == course and existing_mod_act == mod_act)
@@ -136,10 +154,10 @@ def can_place(day_key: str, pod: str, ops_group: str, start_min: int, course: st
     
     return True
 
-def place(day_key: str, pod: str, ops_group: str, start_min: int, course: str, mod_act: str):
-    end_min = start_min + SHOW_LEN
+def place(day_key: str, pod: str, ops_group: str, start_min: int, course: str, mod_act: str, show_len: int):
+    end_min = start_min + show_len
     ops_used_starts.setdefault((day_key, ops_group), set()).add(start_min)
-    all_bookings[(day_key, pod, start_min)] = (course, mod_act, end_min)
+    all_bookings[(day_key, pod, start_min)] = (course, mod_act, end_min, show_len)
     pod_usage_count[pod] += 1
 
 def pods_sorted_for_slot():
@@ -173,6 +191,9 @@ for _, w in windows.iterrows():
     students = STUDENTS.get(course, DEFAULT_STUDENTS_OTHER)
     seats_required = math.ceil(students * (1.0 + BUFFER_PCT))
 
+    # Get show length for this course from mapping
+    show_len = get_show_length(course)
+    
     days = business_days_inclusive(open_dt, close_dt)
     if not days:
         raise ValueError(f"No business days in window for ({course}, {mod}).")
@@ -186,7 +207,7 @@ for _, w in windows.iterrows():
             break
             
         day_key = d.strftime("%Y-%m-%d")
-        candidate_starts = candidate_starts_for_date(d)
+        candidate_starts = candidate_starts_for_date(d, show_len)
         
         # Try each time slot
         for start_min in candidate_starts:
@@ -199,11 +220,11 @@ for _, w in windows.iterrows():
                 cap = podinfo["capacity"]
                 grp = podinfo["ops_group"]
                 
-                if can_place(day_key, pod, grp, start_min, course, mod, d):
-                    place(day_key, pod, grp, start_min, course, mod)
+                if can_place(day_key, pod, grp, start_min, course, mod, d, show_len):
+                    place(day_key, pod, grp, start_min, course, mod, show_len)
                     
                     start_t = time_from_minutes(start_min)
-                    end_t = time_from_minutes(start_min + SHOW_LEN)
+                    end_t = time_from_minutes(start_min + show_len)
                     
                     schedule_rows.append({
                         "Course": course,
@@ -213,6 +234,7 @@ for _, w in windows.iterrows():
                         "End": end_t.strftime("%H:%M"),
                         "Pod": pod,
                         "Pod Capacity": cap,
+                        "Show Length": show_len,
                     })
                     
                     total_capacity += cap
@@ -233,6 +255,7 @@ for _, w in windows.iterrows():
         "Seats Required": seats_required,
         "Scheduled Seats": total_capacity,
         "Shows Scheduled": shows_for_pair,
+        "Show Length": show_len,
         "Open": open_dt.date().isoformat(),
         "Close": close_dt.date().isoformat(),
     })
@@ -243,11 +266,17 @@ for _, w in windows.iterrows():
 schedule_df = pd.DataFrame(schedule_rows).sort_values(["Date", "Start", "Pod"]).reset_index(drop=True)
 summary_df = pd.DataFrame(summary_rows).sort_values(["Course", "Mod/Act"]).reset_index(drop=True)
 
+print("=== SHOW LENGTH MAPPING ===")
+for prefix, length in SHOW_LENGTH_MAP.items():
+    print(f"{prefix} -> {length} mins")
+print(f"Default -> {DEFAULT_SHOW_LEN} mins")
+print()
+
 print("=== SUMMARY ===")
 print(summary_df.to_string(index=False))
 
 print("\n=== SCHEDULE ===")
-print(schedule_df.to_string(index=False))
+print(schedule_df[["Course", "Mod/Act", "Date", "Start", "End", "Pod", "Pod Capacity", "Show Length"]].to_string(index=False))
 
 # Ensure proper sorting first
 schedule_df_sorted = schedule_df.sort_values(
@@ -257,7 +286,7 @@ schedule_df_sorted = schedule_df.sort_values(
 # Print grouped output
 for (course, mod), group in schedule_df_sorted.groupby(["Course", "Mod/Act"]):
     print(f"\n===== {course} | {mod} =====")
-    print(group.to_string(index=False))
+    print(group[["Date", "Start", "End", "Pod", "Pod Capacity", "Show Length"]].to_string(index=False))
 
 # Optional exports:
 schedule_df.to_csv("show_schedule.csv", index=False)
