@@ -1,5 +1,4 @@
 from Scheduling_Script import schedule_df
-
 import pandas as pd
 
 SHOW_LEN_MIN = 20
@@ -31,6 +30,15 @@ STUDENTS = {"Bio 181": 576, "Bio 100": 350}
 DEFAULT_STUDENTS_OTHER = 200
 BUFFER_PCT = 0.10
 
+# HOLIDAYS (No scheduling on these dates)
+HOLIDAYS = [
+    pd.Timestamp(2026, 1, 19).date(),  # Mon, 1/19/26
+    pd.Timestamp(2026, 3, 9).date(),   # Mon, 3/9/26
+    pd.Timestamp(2026, 3, 10).date(),  # Tue, 3/10/26
+    pd.Timestamp(2026, 3, 11).date(),  # Wed, 3/11/26
+    pd.Timestamp(2026, 3, 12).date(),  # Thu, 3/12/26
+    pd.Timestamp(2026, 3, 13).date(),  # Fri, 3/13/26
+]
 
 def _prep(schedule_df: pd.DataFrame) -> pd.DataFrame:
     df = schedule_df.copy()
@@ -167,6 +175,23 @@ def test_weekdays_only(schedule_df: pd.DataFrame):
     )
 
 
+def test_no_shows_on_holidays(schedule_df: pd.DataFrame):
+    """
+    No shows should be scheduled on holidays.
+    """
+    df = schedule_df.copy()
+    df["Date_dt"] = pd.to_datetime(df["Date"])
+    df["Date_only"] = df["Date_dt"].dt.date
+    
+    holiday_shows = df[df["Date_only"].isin(HOLIDAYS)]
+    
+    assert holiday_shows.empty, (
+        "Found shows scheduled on holidays:\n"
+        + holiday_shows[["Course","Mod/Act","Date","Start","End","Pod"]].to_string(index=False)
+        + f"\n\nHolidays: {', '.join([h.strftime('%m/%d/%y') for h in HOLIDAYS])}"
+    )
+
+
 def test_within_working_hours(schedule_df: pd.DataFrame):
     """
     Shows must be within operational hours:
@@ -205,7 +230,7 @@ def test_within_working_hours(schedule_df: pd.DataFrame):
 
 def test_break_between_different_mod_acts(schedule_df: pd.DataFrame):
     """
-    7) Test that shows in the same pod have at least 10-minute break 
+    8) Test that shows in the same pod have at least 10-minute break 
     between them when they are for different modules/activities.
     """
     df = _prep(schedule_df)
@@ -264,6 +289,7 @@ def run_all_tests(schedule_df: pd.DataFrame):
     test_show_runtime_20min(schedule_df)
     test_within_working_hours(schedule_df)
     test_weekdays_only(schedule_df)
+    test_no_shows_on_holidays(schedule_df)
     test_break_between_different_mod_acts(schedule_df)
     print("✅ All constraint tests passed!")
 

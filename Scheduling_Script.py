@@ -38,17 +38,32 @@ END_HOUR_REGULAR = time(17, 0)  # Regular closing time (Mon-Thu)
 END_HOUR_FRIDAY = time(13, 0)   # Early closing on Fridays (1 PM)
 STEP_MIN = 5  # 5-min grid
 
+# HOLIDAYS (No scheduling on these dates)
+HOLIDAYS = [
+    datetime(2026, 1, 19).date(),  # Mon, 1/19/26
+    datetime(2026, 3, 9).date(),   # Mon, 3/9/26
+    datetime(2026, 3, 10).date(),  # Tue, 3/10/26
+    datetime(2026, 3, 11).date(),  # Wed, 3/11/26
+    datetime(2026, 3, 12).date(),  # Thu, 3/12/26
+    datetime(2026, 3, 13).date(),  # Fri, 3/13/26
+]
+
 # -----------------------------
 # HELPERS
 # -----------------------------
 def parse_date(s: str) -> datetime:
     return pd.to_datetime(s).to_pydatetime().replace(hour=0, minute=0, second=0, microsecond=0)
 
+def is_holiday(date: datetime) -> bool:
+    """Check if a date is a holiday."""
+    return date.date() in HOLIDAYS
+
 def business_days_inclusive(start: datetime, end: datetime):
+    """Get business days (Mon-Fri) excluding holidays."""
     days = []
     d = start
     while d <= end:
-        if d.weekday() < 5:  # Mon-Fri only
+        if d.weekday() < 5 and not is_holiday(d):  # Mon-Fri only, no holidays
             days.append(d)
         d += timedelta(days=1)
     return days
@@ -250,3 +265,4 @@ summary_df.to_csv("show_summary.csv", index=False)
 
 print(f"\n✅ Successfully scheduled {len(schedule_rows)} shows.")
 print("Note: Operational hours - 9 AM to 5 PM (Mon-Thu), 9 AM to 1 PM (Fri)")
+print(f"Note: No scheduling on holidays: {', '.join([h.strftime('%m/%d/%y') for h in HOLIDAYS])}")
