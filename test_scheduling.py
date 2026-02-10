@@ -6,7 +6,8 @@ SHOW_LEN_MIN = 20
 BREAK_LEN_MIN = 10  # 10-minute break between different mod/acts
 
 WORK_START_MIN = 9 * 60      # 09:00
-WORK_END_MIN = 17 * 60       # 17:00
+WORK_END_MIN_REGULAR = 17 * 60  # 17:00 (Mon-Thu)
+WORK_END_MIN_FRIDAY = 13 * 60   # 13:00 (Friday)
 
 POD_CAPACITY = {
     "CRTVC 1": 6,
@@ -35,13 +36,17 @@ def _prep(schedule_df: pd.DataFrame) -> pd.DataFrame:
     df = schedule_df.copy()
 
     # Ensure types
-    df["Date"] = pd.to_datetime(df["Date"]).dt.date
+    df["Date"] = pd.to_datetime(df["Date"])
+    df["Date_only"] = df["Date"].dt.date
     df["Start_dt"] = pd.to_datetime(df["Start"], format="%H:%M")
     df["End_dt"] = pd.to_datetime(df["End"], format="%H:%M")
 
     # Convert to minutes from midnight for easy interval math
     df["Start_min"] = df["Start_dt"].dt.hour * 60 + df["Start_dt"].dt.minute
     df["End_min"] = df["End_dt"].dt.hour * 60 + df["End_dt"].dt.minute
+    
+    # Add day of week (0=Monday, 4=Friday)
+    df["DayOfWeek"] = df["Date"].dt.weekday
 
     return df
 
@@ -92,7 +97,7 @@ def test_no_overlap_of_pods(schedule_df: pd.DataFrame):
     df = _prep(schedule_df)
 
     violations = []
-    for (date, pod), g in df.groupby(["Date", "Pod"]):
+    for (date, pod), g in df.groupby(["Date_only", "Pod"]):
         g = g.sort_values("Start_min")
         prev_end = None
         prev_row = None
@@ -120,14 +125,14 @@ def test_ops_team_start_end_uniqueness(schedule_df: pd.DataFrame):
     df["OpsGroup"] = df["Pod"].map(OPS_GROUP)
 
     # Check unique start times per (Date, OpsGroup)
-    for (date, grp), g in df.groupby(["Date", "OpsGroup"]):
+    for (date, grp), g in df.groupby(["Date_only", "OpsGroup"]):
         starts = g["Start_min"].tolist()
         if len(starts) != len(set(starts)):
             dup = g[g.duplicated("Start_min", keep=False)][["Course","Mod/Act","Pod","Start","End","Date"]]
             raise AssertionError(f"Duplicate START time in ops group {grp} on {date}:\n{dup.to_string(index=False)}")
 
     # Check unique end times per (Date, OpsGroup)
-    for (date, grp), g in df.groupby(["Date", "OpsGroup"]):
+    for (date, grp), g in df.groupby(["Date_only", "OpsGroup"]):
         ends = g["End_min"].tolist()
         if len(ends) != len(set(ends)):
             dup = g[g.duplicated("End_min", keep=False)][["Course","Mod/Act","Pod","Start","End","Date"]]
@@ -143,7 +148,7 @@ def test_show_runtime_20min(schedule_df: pd.DataFrame):
     bad = df[(df["End_min"] - df["Start_min"]) != SHOW_LEN_MIN]
     assert bad.empty, (
         "Shows with non-20-min duration:\n"
-        + bad[["Course","Mod/Act","Date","Pod","Start","End"]].to_string(index=False)
+        + bad[["Course","Mod/Act","Date_only","Pod","Start","End"]].to_string(index=False)
     )
 
 
@@ -164,20 +169,37 @@ def test_weekdays_only(schedule_df: pd.DataFrame):
 
 def test_within_working_hours(schedule_df: pd.DataFrame):
     """
-    Shows must be within 9am–5pm.
+    Shows must be within operational hours:
+    - Mon-Thu: 9am–5pm
+    - Friday: 9am–1pm
     """
-    df = schedule_df.copy()
+    df = _prep(schedule_df)
 
-    start_dt = pd.to_datetime(df["Start"], format="%H:%M")
-    end_dt = pd.to_datetime(df["End"], format="%H:%M")
+    violations = []
+    for _, row in df.iterrows():
+        start_min = row["Start_min"]
+        end_min = row["End_min"]
+        day_of_week = row["DayOfWeek"]
+        
+        # Check start time (always 9:00 AM)
+        if start_min < WORK_START_MIN:
+            violations.append((row["Date_only"], row["Pod"], row["Course"], row["Mod/Act"], 
+                             row["Start"], row["End"], "Starts before 9:00 AM"))
+        
+        # Check end time based on day of week
+        if day_of_week == 4:  # Friday
+            if end_min > WORK_END_MIN_FRIDAY:
+                violations.append((row["Date_only"], row["Pod"], row["Course"], row["Mod/Act"], 
+                                 row["Start"], row["End"], f"Ends after 13:00 on Friday"))
+        else:  # Monday-Thursday
+            if end_min > WORK_END_MIN_REGULAR:
+                violations.append((row["Date_only"], row["Pod"], row["Course"], row["Mod/Act"], 
+                                 row["Start"], row["End"], f"Ends after 17:00"))
 
-    df["Start_min"] = start_dt.dt.hour * 60 + start_dt.dt.minute
-    df["End_min"] = end_dt.dt.hour * 60 + end_dt.dt.minute
-
-    bad = df[(df["Start_min"] < WORK_START_MIN) | (df["End_min"] > WORK_END_MIN)]
-    assert bad.empty, (
-        "Found shows outside working hours (09:00–17:00):\n"
-        + bad[["Course","Mod/Act","Date","Start","End","Pod"]].to_string(index=False)
+    assert not violations, (
+        "Found shows outside operational hours:\n"
+        + "\n".join([f"Date: {v[0]}, Pod: {v[1]}, Course: {v[2]}, Mod/Act: {v[3]}, "
+                     f"Time: {v[4]}-{v[5]}, Issue: {v[6]}" for v in violations])
     )
 
 
@@ -189,7 +211,7 @@ def test_break_between_different_mod_acts(schedule_df: pd.DataFrame):
     df = _prep(schedule_df)
     
     violations = []
-    for (date, pod), g in df.groupby(["Date", "Pod"]):
+    for (date, pod), g in df.groupby(["Date_only", "Pod"]):
         g = g.sort_values("Start_min")
         for i in range(len(g) - 1):
             current_row = g.iloc[i]

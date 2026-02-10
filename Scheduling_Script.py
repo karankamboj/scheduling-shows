@@ -34,8 +34,9 @@ DATA = [
 SHOW_LEN = 20  # minutes
 BREAK_LEN = 10  # minutes break between different activities in same pod
 START_HOUR = time(9, 0)
-END_HOUR = time(17, 0)
-STEP_MIN = 5  # 5-min grid like your current output
+END_HOUR_REGULAR = time(17, 0)  # Regular closing time (Mon-Thu)
+END_HOUR_FRIDAY = time(13, 0)   # Early closing on Fridays (1 PM)
+STEP_MIN = 5  # 5-min grid
 
 # -----------------------------
 # HELPERS
@@ -58,12 +59,19 @@ def minutes(t: time) -> int:
 def time_from_minutes(m: int) -> time:
     return time(m // 60, m % 60)
 
-def candidate_starts(step=STEP_MIN):
-    start_m = minutes(START_HOUR)
-    last_start = minutes(END_HOUR) - SHOW_LEN
-    return list(range(start_m, last_start + 1, step))
+def get_end_hour_for_date(date: datetime) -> time:
+    """Return closing time based on day of week."""
+    if date.weekday() == 4:  # Friday (0=Monday, 4=Friday)
+        return END_HOUR_FRIDAY
+    else:
+        return END_HOUR_REGULAR
 
-CANDIDATE_STARTS = candidate_starts()
+def candidate_starts_for_date(date: datetime, step=STEP_MIN):
+    """Generate candidate start times based on day of week."""
+    start_m = minutes(START_HOUR)
+    end_hour = get_end_hour_for_date(date)
+    last_start = minutes(end_hour) - SHOW_LEN
+    return list(range(start_m, last_start + 1, step))
 
 # -----------------------------
 # STATE (global across all modules)
@@ -78,12 +86,17 @@ all_bookings = {}
 # Soft balancing: spread usage across pods (tie-breaker)
 pod_usage_count = {p["pod"]: 0 for p in PODS}
 
-def can_place(day_key: str, pod: str, ops_group: str, start_min: int, course: str, mod_act: str) -> bool:
+def can_place(day_key: str, pod: str, ops_group: str, start_min: int, course: str, mod_act: str, date_obj: datetime) -> bool:
     # ops-team: no same start time within group
     if start_min in ops_used_starts.get((day_key, ops_group), set()):
         return False
     
     end_min = start_min + SHOW_LEN
+    
+    # Check if show would end after closing time
+    end_hour = get_end_hour_for_date(date_obj)
+    if end_min > minutes(end_hour):
+        return False
     
     # Check against all existing bookings in the same pod
     for (d, p, existing_start), details in all_bookings.items():
@@ -158,9 +171,10 @@ for _, w in windows.iterrows():
             break
             
         day_key = d.strftime("%Y-%m-%d")
+        candidate_starts = candidate_starts_for_date(d)
         
         # Try each time slot
-        for start_min in CANDIDATE_STARTS:
+        for start_min in candidate_starts:
             if total_capacity >= seats_required:
                 break
             
@@ -170,7 +184,7 @@ for _, w in windows.iterrows():
                 cap = podinfo["capacity"]
                 grp = podinfo["ops_group"]
                 
-                if can_place(day_key, pod, grp, start_min, course, mod):
+                if can_place(day_key, pod, grp, start_min, course, mod, d):
                     place(day_key, pod, grp, start_min, course, mod)
                     
                     start_t = time_from_minutes(start_min)
@@ -234,4 +248,5 @@ for (course, mod), group in schedule_df_sorted.groupby(["Course", "Mod/Act"]):
 schedule_df.to_csv("show_schedule.csv", index=False)
 summary_df.to_csv("show_summary.csv", index=False)
 
-print(f"\n✅ Successfully scheduled {len(schedule_rows)} shows with 10-minute breaks between different activities.")
+print(f"\n✅ Successfully scheduled {len(schedule_rows)} shows.")
+print("Note: Operational hours - 9 AM to 5 PM (Mon-Thu), 9 AM to 1 PM (Fri)")
