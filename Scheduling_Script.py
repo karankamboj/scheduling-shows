@@ -135,7 +135,8 @@ for _, w in windows.iterrows():
         raise ValueError(f"No business days in window for ({course}, {mod}).")
 
     # STRICT date preference: close -> open
-    days_desc = list(reversed(days))
+    # days_desc = list(reversed(days))
+    days_desc = list(days)
 
     total_capacity = 0
     shows_for_pair = 0
