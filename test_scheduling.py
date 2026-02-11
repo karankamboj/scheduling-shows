@@ -1,4 +1,36 @@
-from Scheduling_Script import schedule_df
+from Scheduling_Script import schedule
+from datetime import datetime
+
+# Define inputs
+STUDENTS = {"Bio 181": 576, "Bio 100": 350}
+
+DATA = [
+    ("Bio 100", "M1 A1", "Friday, January 16, 2026", "Wednesday, January 28, 2026"),
+    ("Bio 181", "M1 A1", "Friday, January 16, 2026", "Wednesday, January 28, 2026"),
+    ("CHM 113", "CHM M1 A1", "Tuesday, January 20, 2026", "Monday, February 2, 2026"),
+    ("Bio 100", "M1 A2", "Monday, January 26, 2026", "Wednesday, February 4, 2026"),
+    ("Bio 181", "M1 A2", "Monday, January 26, 2026", "Wednesday, February 4, 2026"),
+    ("Bio 182", "M4 A1", "Tuesday, January 27, 2026", "Thursday, February 5, 2026"),
+    ("Bio 100", "M1 A3", "Monday, February 2, 2026", "Wednesday, February 11, 2026"),
+    ("Bio 181", "M1 A3", "Monday, February 2, 2026", "Wednesday, February 11, 2026"),
+    ("CHM 114", "CHM M1 A1", "Monday, February 2, 2026", "Wednesday, February 11, 2026"),
+]
+
+HOLIDAYS = [
+    datetime(2026, 1, 19).date(),  # Mon, 1/19/26
+    datetime(2026, 3, 9).date(),   # Mon, 3/9/26
+    datetime(2026, 3, 10).date(),  # Tue, 3/10/26
+    datetime(2026, 3, 11).date(),  # Wed, 3/11/26
+    datetime(2026, 3, 12).date(),  # Thu, 3/12/26
+    datetime(2026, 3, 13).date(),  # Fri, 3/13/26
+]
+
+# Call the schedule function
+schedule_df, summary_df = schedule(
+    students=STUDENTS,
+    data=DATA,
+    holidays=HOLIDAYS
+)
 import pandas as pd
 
 # Show durations mapping based on course prefix
