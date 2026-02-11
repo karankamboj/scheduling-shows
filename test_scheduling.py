@@ -1,5 +1,14 @@
 from Scheduling_Script import schedule
 from datetime import datetime
+from constants import (
+    BUFFER_PCT,
+    DEFAULT_STUDENTS_OTHER,
+    PODS,
+    SHOW_LENGTH_MAP,
+    DEFAULT_SHOW_LEN,
+    BREAK_LEN
+)
+import pandas as pd
 
 # Define inputs
 STUDENTS = {"Bio 181": 576, "Bio 100": 350}
@@ -31,56 +40,18 @@ schedule_df, summary_df = schedule(
     data=DATA,
     holidays=HOLIDAYS
 )
-import pandas as pd
 
-# Show durations mapping based on course prefix
-SHOW_LENGTH_MAP = {
-    "Bio": 30,      # Bio -> 30 mins
-    "CHM": 30,      # Chm -> 30 mins  
-    "Astronomy": 30, # Astronomy -> 30 mins
-    "Art": 30,      # Art -> 30 mins
-    "Scm": 20,      # Scm -> 20 mins
-    # Default will be 20 minutes
-}
+# Constants for tests (derived from central config where possible)
+BREAK_LEN_MIN = BREAK_LEN  # 10-minute break between different mod/acts
 
-DEFAULT_SHOW_LEN = 20  # minutes for courses not in the map
-BREAK_LEN_MIN = 10  # 10-minute break between different mod/acts
+# Mappings derived from PODS
+POD_CAPACITY = {p["pod"]: p["capacity"] for p in PODS}
+OPS_GROUP = {p["pod"]: p["ops_group"] for p in PODS}
 
 WORK_START_MIN = 9 * 60      # 09:00
 WORK_END_MIN_REGULAR = 17 * 60  # 17:00 (Mon-Thu)
 WORK_END_MIN_FRIDAY = 13 * 60   # 13:00 (Friday)
 
-POD_CAPACITY = {
-    "CRTVC 1": 6,
-    "CRTVC 2": 6,
-    "CRTVC 3": 24,
-    "CRTVC 4": 24,
-    "CRTVC 5": 28,  # 27 + 1
-    "CRTVC 6": 28,  # 27 + 1
-}
-
-OPS_GROUP = {
-    "CRTVC 1": "B",
-    "CRTVC 2": "B",
-    "CRTVC 3": "A",
-    "CRTVC 4": "A",
-    "CRTVC 5": "B",
-    "CRTVC 6": "B",
-}
-
-STUDENTS = {"Bio 181": 576, "Bio 100": 350}
-DEFAULT_STUDENTS_OTHER = 200
-BUFFER_PCT = 0.10
-
-# HOLIDAYS (No scheduling on these dates)
-HOLIDAYS = [
-    pd.Timestamp(2026, 1, 19).date(),  # Mon, 1/19/26
-    pd.Timestamp(2026, 3, 9).date(),   # Mon, 3/9/26
-    pd.Timestamp(2026, 3, 10).date(),  # Tue, 3/10/26
-    pd.Timestamp(2026, 3, 11).date(),  # Wed, 3/11/26
-    pd.Timestamp(2026, 3, 12).date(),  # Thu, 3/12/26
-    pd.Timestamp(2026, 3, 13).date(),  # Fri, 3/13/26
-]
 
 def _prep(schedule_df: pd.DataFrame) -> pd.DataFrame:
     df = schedule_df.copy()
