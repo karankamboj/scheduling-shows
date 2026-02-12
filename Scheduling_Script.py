@@ -189,45 +189,73 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
         total_capacity = 0
         shows_for_pair = 0
         
-        # Try each day in order
-        for d in days:
+        # Calculate weights for Pass 1 (1 to N)
+        num_days = len(days)
+        total_weight = sum(range(1, num_days + 1))
+        
+        # --- PASS 1: Distributed (First to Last) ---
+        # Try to fill each day up to its calculated target seat count
+        for i, d in enumerate(days):
             if total_capacity >= seats_required:
                 break
                 
+            day_weight = i + 1
+            daily_target = math.ceil((day_weight / total_weight) * seats_required)
+            day_capacity_filled = 0
+            
             day_key = d.strftime("%Y-%m-%d")
             candidate_starts = candidate_starts_for_date(d, show_len)
             
-            # Try each time slot
             for start_min in candidate_starts:
-                if total_capacity >= seats_required:
+                if total_capacity >= seats_required or day_capacity_filled >= daily_target:
                     break
                 
-                # Try each pod
                 for podinfo in pods_sorted_for_slot():
-                    pod = podinfo["pod"]
-                    cap = podinfo["capacity"]
-                    grp = podinfo["ops_group"]
+                    pod, cap, grp = podinfo["pod"], podinfo["capacity"], podinfo["ops_group"]
                     
                     if can_place(day_key, pod, grp, start_min, course, mod, d, show_len):
                         place(day_key, pod, grp, start_min, course, mod, show_len)
-                        
-                        start_t = time_from_minutes(start_min)
-                        end_t = time_from_minutes(start_min + show_len)
+                        start_t, end_t = time_from_minutes(start_min), time_from_minutes(start_min + show_len)
                         
                         schedule_rows.append({
-                            "Course": course,
-                            "Mod/Act": mod,
-                            "Date": day_key,
-                            "Start": start_t.strftime("%H:%M"),
-                            "End": end_t.strftime("%H:%M"),
-                            "Pod": pod,
-                            "Pod Capacity": cap,
-                            "Show Length": show_len,
+                            "Course": course, "Mod/Act": mod, "Date": day_key,
+                            "Start": start_t.strftime("%H:%M"), "End": end_t.strftime("%H:%M"),
+                            "Pod": pod, "Pod Capacity": cap, "Show Length": show_len,
                         })
-                        
                         total_capacity += cap
                         shows_for_pair += 1
-                        break  # Found a pod for this time slot
+                        day_capacity_filled += cap
+                        break
+
+        # --- PASS 2: Catch-up (Last to First) ---
+        # If still need more seats, fill remaining starting from the end
+        if total_capacity < seats_required:
+            for d in reversed(days):
+                if total_capacity >= seats_required:
+                    break
+                    
+                day_key = d.strftime("%Y-%m-%d")
+                candidate_starts = candidate_starts_for_date(d, show_len)
+                
+                for start_min in candidate_starts:
+                    if total_capacity >= seats_required:
+                        break
+                    
+                    for podinfo in pods_sorted_for_slot():
+                        pod, cap, grp = podinfo["pod"], podinfo["capacity"], podinfo["ops_group"]
+                        
+                        if can_place(day_key, pod, grp, start_min, course, mod, d, show_len):
+                            place(day_key, pod, grp, start_min, course, mod, show_len)
+                            start_t, end_t = time_from_minutes(start_min), time_from_minutes(start_min + show_len)
+                            
+                            schedule_rows.append({
+                                "Course": course, "Mod/Act": mod, "Date": day_key,
+                                "Start": start_t.strftime("%H:%M"), "End": end_t.strftime("%H:%M"),
+                                "Pod": pod, "Pod Capacity": cap, "Show Length": show_len,
+                            })
+                            total_capacity += cap
+                            shows_for_pair += 1
+                            break
         
         if total_capacity < seats_required:
             raise ValueError(
