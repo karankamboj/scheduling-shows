@@ -15,7 +15,7 @@ from constants import (
     END_HOUR_FRIDAY,
     STEP_MIN
 )
-
+from test_scheduling import run_all_tests
 # -----------------------------
 # HELPER FUNCTIONS
 # -----------------------------
@@ -281,7 +281,7 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
     # -----------------------------
     schedule_df = pd.DataFrame(schedule_rows).sort_values(["Date", "Start", "Pod"]).reset_index(drop=True)
     summary_df = pd.DataFrame(summary_rows).sort_values(["Course", "Mod/Act"]).reset_index(drop=True)
-    
+    run_all_tests(schedule_df, STUDENTS, HOLIDAYS)
     return schedule_df, summary_df
 
 

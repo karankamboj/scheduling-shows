@@ -1,4 +1,3 @@
-from Scheduling_Script import schedule
 from datetime import datetime
 from constants import (
     BUFFER_PCT,
@@ -6,52 +5,15 @@ from constants import (
     PODS,
     SHOW_LENGTH_MAP,
     DEFAULT_SHOW_LEN,
-    BREAK_LEN
+    BREAK_LEN,
+    BREAK_LEN_MIN,
+    POD_CAPACITY,
+    OPS_GROUP,
+    WORK_START_MIN,
+    WORK_END_MIN_REGULAR,
+    WORK_END_MIN_FRIDAY
 )
 import pandas as pd
-
-# Define inputs
-STUDENTS = {"Bio 181": 576, "Bio 100": 350}
-
-DATA = [
-    ("Bio 100", "M1 A1", "Friday, January 16, 2026", "Wednesday, January 28, 2026"),
-    ("Bio 181", "M1 A1", "Friday, January 16, 2026", "Wednesday, January 28, 2026"),
-    ("CHM 113", "CHM M1 A1", "Tuesday, January 20, 2026", "Monday, February 2, 2026"),
-    ("Bio 100", "M1 A2", "Monday, January 26, 2026", "Wednesday, February 4, 2026"),
-    ("Bio 181", "M1 A2", "Monday, January 26, 2026", "Wednesday, February 4, 2026"),
-    ("Bio 182", "M4 A1", "Tuesday, January 27, 2026", "Thursday, February 5, 2026"),
-    ("Bio 100", "M1 A3", "Monday, February 2, 2026", "Wednesday, February 11, 2026"),
-    ("Bio 181", "M1 A3", "Monday, February 2, 2026", "Wednesday, February 11, 2026"),
-    ("CHM 114", "CHM M1 A1", "Monday, February 2, 2026", "Wednesday, February 11, 2026"),
-]
-
-HOLIDAYS = [
-    datetime(2026, 1, 19).date(),  # Mon, 1/19/26
-    datetime(2026, 3, 9).date(),   # Mon, 3/9/26
-    datetime(2026, 3, 10).date(),  # Tue, 3/10/26
-    datetime(2026, 3, 11).date(),  # Wed, 3/11/26
-    datetime(2026, 3, 12).date(),  # Thu, 3/12/26
-    datetime(2026, 3, 13).date(),  # Fri, 3/13/26
-]
-
-# Call the schedule function
-schedule_df, summary_df = schedule(
-    students=STUDENTS,
-    data=DATA,
-    holidays=HOLIDAYS
-)
-
-# Constants for tests (derived from central config where possible)
-BREAK_LEN_MIN = BREAK_LEN  # 10-minute break between different mod/acts
-
-# Mappings derived from PODS
-POD_CAPACITY = {p["pod"]: p["capacity"] for p in PODS}
-OPS_GROUP = {p["pod"]: p["ops_group"] for p in PODS}
-
-WORK_START_MIN = 9 * 60      # 09:00
-WORK_END_MIN_REGULAR = 17 * 60  # 17:00 (Mon-Thu)
-WORK_END_MIN_FRIDAY = 13 * 60   # 13:00 (Friday)
-
 
 def _prep(schedule_df: pd.DataFrame) -> pd.DataFrame:
     df = schedule_df.copy()
@@ -82,7 +44,7 @@ def get_expected_show_length(course: str) -> int:
     # Look up in the mapping, return default if not found
     return SHOW_LENGTH_MAP.get(prefix, DEFAULT_SHOW_LEN)
 
-def test_capacity(schedule_df: pd.DataFrame):
+def test_capacity(schedule_df: pd.DataFrame, STUDENTS):
     """
     1) Capacity:
       - Every Course+Mod/Act has enough scheduled seats to cover students + buffer
@@ -209,7 +171,7 @@ def test_weekdays_only(schedule_df: pd.DataFrame):
     )
 
 
-def test_no_shows_on_holidays(schedule_df: pd.DataFrame):
+def test_no_shows_on_holidays(schedule_df: pd.DataFrame, HOLIDAYS):
     """
     No shows should be scheduled on holidays.
     """
@@ -316,16 +278,13 @@ def test_break_between_different_mod_acts(schedule_df: pd.DataFrame):
     )
 
 
-def run_all_tests(schedule_df: pd.DataFrame):
-    test_capacity(schedule_df)
+def run_all_tests(schedule_df: pd.DataFrame, STUDENTS, HOLIDAYS):
+    test_capacity(schedule_df, STUDENTS)
     test_no_overlap_of_pods(schedule_df)
     test_ops_team_start_end_uniqueness(schedule_df)
     test_show_runtime_correctness(schedule_df)
     test_within_working_hours(schedule_df)
     test_weekdays_only(schedule_df)
-    test_no_shows_on_holidays(schedule_df)
+    test_no_shows_on_holidays(schedule_df, HOLIDAYS)
     test_break_between_different_mod_acts(schedule_df)
-    print("✅ All constraint tests passed!")
-
-
-run_all_tests(schedule_df)
+    print("All constraint tests passed!")

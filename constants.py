@@ -34,3 +34,17 @@ START_HOUR = time(9, 0)
 END_HOUR_REGULAR = time(17, 0)  # Regular closing time (Mon-Thu)
 END_HOUR_FRIDAY = time(13, 0)   # Early closing on Fridays (1 PM)
 STEP_MIN = 5  # 5-min grid
+
+
+# Testing Constants
+
+# Constants for tests (derived from central config where possible)
+BREAK_LEN_MIN = BREAK_LEN  # 10-minute break between different mod/acts
+
+# Mappings derived from PODS
+POD_CAPACITY = {p["pod"]: p["capacity"] for p in PODS}
+OPS_GROUP = {p["pod"]: p["ops_group"] for p in PODS}
+
+WORK_START_MIN = 9 * 60      # 09:00
+WORK_END_MIN_REGULAR = 17 * 60  # 17:00 (Mon-Thu)
+WORK_END_MIN_FRIDAY = 13 * 60   # 13:00 (Friday)
