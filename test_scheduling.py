@@ -281,10 +281,10 @@ def test_break_between_different_mod_acts(schedule_df: pd.DataFrame):
 def run_all_tests(schedule_df: pd.DataFrame, STUDENTS, HOLIDAYS):
     test_capacity(schedule_df, STUDENTS)
     test_no_overlap_of_pods(schedule_df)
-    test_ops_team_start_end_uniqueness(schedule_df)
+    test_ops_team_start_end_uniqueness(schedule_df) # Need to validate
     test_show_runtime_correctness(schedule_df)
     test_within_working_hours(schedule_df)
-    test_weekdays_only(schedule_df)
-    test_no_shows_on_holidays(schedule_df, HOLIDAYS)
+    test_weekdays_only(schedule_df) # Need to validate
+    test_no_shows_on_holidays(schedule_df, HOLIDAYS) # Need to validate
     test_break_between_different_mod_acts(schedule_df)
     print("All constraint tests passed!")

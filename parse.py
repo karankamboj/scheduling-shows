@@ -13,6 +13,67 @@ FILE_PATH = "/Users/karankamboj/Documents/Work/Scheduling/data.xlsx"
 
 MOD_ACT_RE = re.compile(r"M\d+\s*A\d+", re.IGNORECASE)
 
+
+from datetime import datetime
+
+from datetime import datetime
+
+def iso_to_long_date(iso_str: str) -> str:
+    dt = datetime.fromisoformat(iso_str)
+    # "Friday, January 16, 2026"
+    return dt.strftime("%A, %B %d, %Y").replace(" 0", " ")
+
+def normalize_course_name(course: str) -> str:
+    s = str(course).strip()
+    s = s.replace("*", "")           # remove at-cap marker if present
+    s = " ".join(s.split())          # normalize whitespace
+    # Optional normalization (keep if your data has BIO/CHM uppercase)
+    s = s.replace("BIO", "Bio")
+    return s
+
+def build_constants(subjects_df, holidays_df, caps_df):
+    # ---- DATA ----
+    data = []
+    for _, row in subjects_df.iterrows():
+        subject = str(row["subject"]).strip()
+        mod_act = str(row["mod_act"]).strip()
+        open_iso = row.get("vr_show_open_date")
+        close_iso = row.get("vr_show_close_date")
+
+        if not open_iso or not close_iso:
+            continue
+
+        data.append(
+            (subject, mod_act, iso_to_long_date(open_iso), iso_to_long_date(close_iso))
+        )
+
+    # ---- HOLIDAYS ----
+    holidays = []
+    for _, row in holidays_df.iterrows():
+        iso = row.get("holiday_date")
+        if not iso:
+            continue
+        holidays.append(datetime.fromisoformat(iso).date())
+
+    # ---- STUDENTS (actually @Cap) ----
+    students = {}
+    for _, row in caps_df.iterrows():
+        course = row.get("course")
+        cap_val = row.get("cap")
+        if course is None or cap_val is None or cap_val == "":
+            continue
+
+        key = normalize_course_name(course)
+
+        try:
+            students[key] = int(cap_val)
+        except Exception:
+            # if cap_val isn't numeric, skip it
+            continue
+
+    return data, holidays, students
+
+
 def to_iso(d):
     """Convert Excel datetime/date to ISO string; pass through None."""
     if d is None or d == "":
@@ -38,6 +99,9 @@ def parse_subject_open_close(ws, max_rows=500):
     for r in ws.iter_rows(min_row=1, max_row=max_rows, min_col=1, max_col=6, values_only=True):
         c1, c2, c3, c4, *_ = (list(r) + [None] * 6)[:6]
 
+        if(c1=="Chem 114 Mod/Act"):
+            print("UY")
+
         # Subject header row (e.g., "Bio 181 Mod/Act")
         if isinstance(c1, str) and "mod/act" in c1.lower():
             cleaned = c1.replace("\n", " ")
@@ -51,7 +115,7 @@ def parse_subject_open_close(ws, max_rows=500):
             continue
 
         # Data row: Mod/Act + dates
-        if current_subject and isinstance(c1, str) and MOD_ACT_RE.match(c1):
+        if current_subject and isinstance(c1, str) and MOD_ACT_RE.search(c1):
             mod_act = c1.strip()
             open_date = to_iso(c3)
             close_date = to_iso(c4)
@@ -154,11 +218,11 @@ def parse_holidays(ws, max_rows=2000):
 
     return pd.DataFrame(rows)
 
-def main():
+def parse_data():
     wb = openpyxl.load_workbook(FILE_PATH, data_only=True, read_only=True)
 
     # Typically these are the sheets that contain the requested sections:
-    target_sheets = [name for name in wb.sheetnames if "Highlevel and Academi" in name]
+    target_sheets = [name for name in wb.sheetnames if "Spring 26 Highlevel and Academi" in name]
 
     all_subjects = []
     all_course_caps = []
@@ -188,5 +252,20 @@ def main():
     caps_df.to_csv("course_caps.csv", index=False)
     holidays_df.to_csv("holidays.csv", index=False)
 
-if __name__ == "__main__":
-    main()
+    DATA, HOLIDAYS, STUDENTS = build_constants(subjects_df, holidays_df, caps_df)
+
+    print("\nDATA = [")
+    for t in DATA:
+        print(f"    {t},")
+    print("]")
+
+    print("\nHOLIDAYS = [")
+    for d in HOLIDAYS:
+        print(f"    datetime({d.year}, {d.month}, {d.day}).date(),")
+    print("]")
+
+    return DATA, HOLIDAYS, STUDENTS
+
+
+# if __name__ == "__main__":
+#     main()
