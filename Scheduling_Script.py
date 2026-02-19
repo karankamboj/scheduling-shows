@@ -1,6 +1,8 @@
 import math
 from datetime import datetime, timedelta, time
 import pandas as pd
+import openpyxl
+
 
 # Import all constants from the centralized configuration file
 from constants import (
@@ -13,12 +15,18 @@ from constants import (
     START_HOUR,
     END_HOUR_REGULAR,
     END_HOUR_FRIDAY,
-    STEP_MIN
+    STEP_MIN,
+    XSL_PATH
 )
 from test_scheduling import run_all_tests
 # -----------------------------
 # HELPER FUNCTIONS
 # -----------------------------
+
+def parse_sheet():
+    df = openpyxl.load_workbook(XSL_PATH)
+    ws = df["Spring 26 Highlevel and Academi"]
+
 def parse_date(s: str) -> datetime:
     return pd.to_datetime(s).to_pydatetime().replace(hour=0, minute=0, second=0, microsecond=0)
 
