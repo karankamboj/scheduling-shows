@@ -105,6 +105,7 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
     # -----------------------------
     # Shared-ops constraint: pods in same ops_group cannot share the same start time
     ops_used_starts = {}  # (day_key, ops_group) -> set(start_min)
+    ops_used_ends   = {}  # (day_key, ops_group) -> set(end_min)
     
     # Track all bookings with their details
     # Format: (day_key, pod, start_min) -> (course, mod_act, end_min, show_len)
@@ -113,13 +114,17 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
     # Soft balancing: spread usage across pods (tie-breaker)
     pod_usage_count = {p["pod"]: 0 for p in PODS}
     
-    def can_place(day_key: str, pod: str, ops_group: str, start_min: int, 
-                  course: str, mod_act: str, date_obj: datetime, show_len: int) -> bool:
+    def can_place(day_key: str, pod: str, ops_group: str, start_min: int,
+                course: str, mod_act: str, date_obj: datetime, show_len: int) -> bool:
+        end_min = start_min + show_len
+
         # ops-team: no same start time within group
         if start_min in ops_used_starts.get((day_key, ops_group), set()):
             return False
-        
-        end_min = start_min + show_len
+
+        # ops-team: no same end time within group  ✅ NEW
+        if end_min in ops_used_ends.get((day_key, ops_group), set()):
+            return False
         
         # Check if show would end after closing time
         end_hour = get_end_hour_for_date(date_obj)
@@ -149,10 +154,13 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
         
         return True
     
-    def place(day_key: str, pod: str, ops_group: str, start_min: int, 
-              course: str, mod_act: str, show_len: int):
+    def place(day_key: str, pod: str, ops_group: str, start_min: int,
+            course: str, mod_act: str, show_len: int):
         end_min = start_min + show_len
+
         ops_used_starts.setdefault((day_key, ops_group), set()).add(start_min)
+        ops_used_ends.setdefault((day_key, ops_group), set()).add(end_min)  # ✅ NEW
+
         all_bookings[(day_key, pod, start_min)] = (course, mod_act, end_min, show_len)
         pod_usage_count[pod] += 1
     
