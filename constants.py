@@ -49,3 +49,6 @@ OPS_GROUP = {p["pod"]: p["ops_group"] for p in PODS}
 WORK_START_MIN = 9 * 60      # 09:00
 WORK_END_MIN_REGULAR = 17 * 60  # 17:00 (Mon-Thu)
 WORK_END_MIN_FRIDAY = 13 * 60   # 13:00 (Friday)
+
+# Parsing constants
+FILE_PATH = "/Users/karankamboj/Documents/Work/Scheduling/input/data.xlsx"

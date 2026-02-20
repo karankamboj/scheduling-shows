@@ -361,8 +361,8 @@ if __name__ == "__main__":
         print(group[["Date", "Start", "End", "Pod", "Pod Capacity", "Show Length"]].to_string(index=False))
     
     # Optional exports:
-    schedule_df.to_csv("show_schedule.csv", index=False)
-    summary_df.to_csv("show_summary.csv", index=False)
+    schedule_df.to_csv("output/show_schedule.csv", index=False)
+    summary_df.to_csv("output/show_summary.csv", index=False)
 
     run_all_tests(schedule_df, STUDENTS, HOLIDAYS)
     

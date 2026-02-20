@@ -2,21 +2,12 @@ import re
 from datetime import datetime, date
 import openpyxl
 import pandas as pd
-
-
+from constants import FILE_PATH
 
 pd.set_option('display.max_rows', None)
 pd.set_option('display.max_columns', None)
 pd.set_option('display.width', None)
 
-FILE_PATH = "/Users/karankamboj/Documents/Work/Scheduling/data.xlsx"
-
-MOD_ACT_RE = re.compile(r"M\d+\s*A\d+", re.IGNORECASE)
-
-
-from datetime import datetime
-
-from datetime import datetime
 
 def iso_to_long_date(iso_str: str) -> str:
     dt = datetime.fromisoformat(iso_str)
@@ -113,6 +104,8 @@ def parse_subject_open_close(ws, max_rows=500):
             current_subject = " ".join(cleaned.split())
             
             continue
+
+        MOD_ACT_RE = re.compile(r"M\d+\s*A\d+", re.IGNORECASE)
 
         # Data row: Mod/Act + dates
         if current_subject and isinstance(c1, str) and MOD_ACT_RE.search(c1):
@@ -248,9 +241,9 @@ def parse_data():
     print(holidays_df)
 
     # Optional: save outputs
-    subjects_df.to_csv("subjects_vr_open_close.csv", index=False)
-    caps_df.to_csv("course_caps.csv", index=False)
-    holidays_df.to_csv("holidays.csv", index=False)
+    subjects_df.to_csv("output/subjects_vr_open_close.csv", index=False)
+    caps_df.to_csv("output/course_caps.csv", index=False)
+    holidays_df.to_csv("output/holidays.csv", index=False)
 
     DATA, HOLIDAYS, STUDENTS = build_constants(subjects_df, holidays_df, caps_df)
 
