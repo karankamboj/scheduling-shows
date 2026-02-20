@@ -277,6 +277,34 @@ def test_break_between_different_mod_acts(schedule_df: pd.DataFrame):
                      f"Issue: {v[10]}" for v in violations[:20]])
     )
 
+def test_poly_pod_routing(schedule_df: pd.DataFrame):
+    """
+    POLY routing:
+      - If Course contains 'POLY' (case-insensitive), it must be scheduled ONLY in pod 'POLY'
+      - If Course does NOT contain 'POLY', it must NOT be scheduled in pod 'POLY'
+    """
+    df = schedule_df.copy()
+
+    # Normalize
+    df["Course_str"] = df["Course"].fillna("").astype(str)
+    df["Pod_str"] = df["Pod"].fillna("").astype(str).str.strip()
+
+    is_poly_course = df["Course_str"].str.upper().str.contains("POLY", na=False)
+    is_poly_pod = df["Pod_str"].str.upper().eq("POLY")
+
+    # 1) POLY courses scheduled in non-POLY pods
+    bad_poly = df[is_poly_course & (~is_poly_pod)]
+    assert bad_poly.empty, (
+        "Found POLY courses scheduled in non-POLY pods:\n"
+        + bad_poly[["Course", "Mod/Act", "Date", "Start", "End", "Pod"]].to_string(index=False)
+    )
+
+    # 2) Non-POLY courses scheduled in POLY pod
+    bad_non_poly = df[(~is_poly_course) & is_poly_pod]
+    assert bad_non_poly.empty, (
+        "Found NON-POLY courses scheduled in POLY pod:\n"
+        + bad_non_poly[["Course", "Mod/Act", "Date", "Start", "End", "Pod"]].to_string(index=False)
+    )
 
 def run_all_tests(schedule_df: pd.DataFrame, STUDENTS, HOLIDAYS):
     test_capacity(schedule_df, STUDENTS)
@@ -287,4 +315,5 @@ def run_all_tests(schedule_df: pd.DataFrame, STUDENTS, HOLIDAYS):
     test_weekdays_only(schedule_df) # Need to validate
     test_no_shows_on_holidays(schedule_df, HOLIDAYS) # Need to validate
     test_break_between_different_mod_acts(schedule_df)
+    test_poly_pod_routing(schedule_df)
     print("All constraint tests passed!")

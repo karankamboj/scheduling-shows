@@ -16,6 +16,7 @@ PODS = [
     {"pod": "CRTVC 4", "capacity": 24, "ops_group": "A"},
     {"pod": "CRTVC 5", "capacity": 28, "ops_group": "B"},  # 27 + 1
     {"pod": "CRTVC 6", "capacity": 28, "ops_group": "B"},  # 27 + 1
+    {"pod": "POLY", "capacity": 25,  "ops_group": "C"},
 ]
 
 # Show durations mapping based on course prefix

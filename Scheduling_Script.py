@@ -23,6 +23,15 @@ from test_scheduling import run_all_tests
 # HELPER FUNCTIONS
 # -----------------------------
 
+def is_poly_course(course: str) -> bool:
+    return "POLY" in (course or "").upper()
+
+def eligible_pods_for_course(course: str):
+    """If course contains 'POLY' -> only POLY pod, else exclude POLY pod."""
+    if is_poly_course(course):
+        return [p for p in PODS if p["pod"].strip().upper() == "POLY"]
+    return [p for p in PODS if p["pod"].strip().upper() != "POLY"]
+
 def parse_sheet():
     df = openpyxl.load_workbook(XSL_PATH)
     ws = df["Spring 26 Highlevel and Academi"]
@@ -164,9 +173,9 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
         all_bookings[(day_key, pod, start_min)] = (course, mod_act, end_min, show_len)
         pod_usage_count[pod] += 1
     
-    def pods_sorted_for_slot():
-        # Prefer higher capacity; then least-used to spread
-        return sorted(PODS, key=lambda p: (-p["capacity"], pod_usage_count[p["pod"]]))
+    def pods_sorted_for_slot(course: str):
+        pods = eligible_pods_for_course(course)
+        return sorted(pods, key=lambda p: (-p["capacity"], pod_usage_count[p["pod"]]))
     
     # -----------------------------
     # BUILD WINDOWS (Course+Mod/Act)
@@ -226,7 +235,7 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
                 if total_capacity >= seats_required or day_capacity_filled >= daily_target:
                     break
                 
-                for podinfo in pods_sorted_for_slot():
+                for podinfo in pods_sorted_for_slot(course):
                     pod, cap, grp = podinfo["pod"], podinfo["capacity"], podinfo["ops_group"]
                     
                     if can_place(day_key, pod, grp, start_min, course, mod, d, show_len):
