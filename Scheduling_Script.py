@@ -131,7 +131,7 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
         if start_min in ops_used_starts.get((day_key, ops_group), set()):
             return False
 
-        # ops-team: no same end time within group  ✅ NEW
+        # ops-team: no same end time within group  -  NEW
         if end_min in ops_used_ends.get((day_key, ops_group), set()):
             return False
         
@@ -168,7 +168,7 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
         end_min = start_min + show_len
 
         ops_used_starts.setdefault((day_key, ops_group), set()).add(start_min)
-        ops_used_ends.setdefault((day_key, ops_group), set()).add(end_min)  # ✅ NEW
+        ops_used_ends.setdefault((day_key, ops_group), set()).add(end_min)  # NEW
 
         all_bookings[(day_key, pod, start_min)] = (course, mod_act, end_min, show_len)
         pod_usage_count[pod] += 1
@@ -220,11 +220,11 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
         
         # --- PASS 1: Distributed (First to Last) ---
         # Try to fill each day up to its calculated target seat count
-        for i, d in enumerate(days):
+        for i, d in enumerate(reversed(days)):
             if total_capacity >= seats_required:
                 break
                 
-            day_weight = i + 1
+            day_weight = num_days - i
             daily_target = math.ceil((day_weight / total_weight) * seats_required)
             day_capacity_filled = 0
             
@@ -375,6 +375,6 @@ if __name__ == "__main__":
 
     run_all_tests(schedule_df, STUDENTS, HOLIDAYS)
     
-    print(f"\n✅ Successfully scheduled {len(schedule_df)} shows.")
+    print(f"\n Successfully scheduled {len(schedule_df)} shows.")
     print("Note: Operational hours - 9 AM to 5 PM (Mon-Thu), 9 AM to 1 PM (Fri)")
     print(f"Note: No scheduling on holidays: {', '.join([h.strftime('%m/%d/%y') for h in HOLIDAYS])}")
