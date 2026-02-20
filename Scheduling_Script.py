@@ -220,11 +220,11 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
         
         # --- PASS 1: Distributed (First to Last) ---
         # Try to fill each day up to its calculated target seat count
-        for i, d in enumerate(days):
+        for i, d in enumerate(reversed(days)):
             if total_capacity >= seats_required:
                 break
                 
-            day_weight = i + 1
+            day_weight = num_days - i
             daily_target = math.ceil((day_weight / total_weight) * seats_required)
             day_capacity_filled = 0
             
