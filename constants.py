@@ -10,8 +10,8 @@ BUFFER_PCT = 0.10
 DEFAULT_STUDENTS_OTHER = 200
 
 PODS = [
-    {"pod": "CRTVC 1", "capacity": 6,  "ops_group": "B"},
-    {"pod": "CRTVC 2", "capacity": 6,  "ops_group": "B"},
+    # {"pod": "CRTVC 1", "capacity": 6,  "ops_group": "B"},
+    # {"pod": "CRTVC 2", "capacity": 6,  "ops_group": "B"},
     {"pod": "CRTVC 3", "capacity": 24, "ops_group": "A"},
     {"pod": "CRTVC 4", "capacity": 24, "ops_group": "A"},
     {"pod": "CRTVC 5", "capacity": 28, "ops_group": "B"},  # 27 + 1

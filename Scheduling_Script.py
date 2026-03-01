@@ -1,6 +1,7 @@
 import math
 from datetime import datetime, timedelta, time
 import pandas as pd
+from parse import parse_data
 
 # Import all constants from the centralized configuration file
 from constants import (
@@ -151,6 +152,100 @@ def distribute_proportional_counts(weights: list, total: int) -> list:
         floors[i] += 1
     return floors
 
+def export_shows_per_hour(schedule_df: pd.DataFrame,
+                          output_path: str = "output/shows_per_hour.csv"):
+    """
+    Generates CSV with number of shows per hour bucket:
+
+    9–10 AM
+    10–11 AM
+    11–12 PM
+    12–1 PM
+    1–2 PM
+    2–3 PM
+    3–4 PM
+    4–5 PM
+    """
+
+    df = schedule_df.copy()
+
+    # Convert Start column to datetime
+    df["Start"] = pd.to_datetime(df["Start"], format="%H:%M")
+
+    # Extract hour
+    df["Hour"] = df["Start"].dt.hour
+
+    # Map hour to required bucket labels
+    bucket_map = {
+        9:  "9–10 AM",
+        10: "10–11 AM",
+        11: "11–12 PM",
+        12: "12–1 PM",
+        13: "1–2 PM",
+        14: "2–3 PM",
+        15: "3–4 PM",
+        16: "4–5 PM"
+    }
+
+    df = df[df["Hour"].isin(bucket_map.keys())]
+
+    df["Hour Bucket"] = df["Hour"].map(bucket_map)
+
+    # Preserve correct order
+    bucket_order = [
+        "9–10 AM",
+        "10–11 AM",
+        "11–12 PM",
+        "12–1 PM",
+        "1–2 PM",
+        "2–3 PM",
+        "3–4 PM",
+        "4–5 PM"
+    ]
+
+    shows_per_hour = (
+        df.groupby("Hour Bucket")
+          .size()
+          .reindex(bucket_order, fill_value=0)
+          .reset_index(name="Number of Shows")
+    )
+
+    # Save CSV
+    shows_per_hour.to_csv(output_path, index=False)
+
+    print(f"Shows-per-hour CSV saved to: {output_path}")
+
+    return shows_per_hour
+
+def export_shows_per_day(schedule_df: pd.DataFrame, output_path: str = "output/shows_per_day.csv"):
+    """
+    Generates a CSV file with number of shows scheduled per day.
+
+    Parameters:
+    -----------
+    schedule_df : pd.DataFrame
+        The schedule dataframe returned by your scheduler.
+    
+    output_path : str
+        Path where the CSV should be saved.
+    """
+
+    # Count shows per date
+    shows_per_day = (
+        schedule_df
+        .groupby("Date")
+        .size()
+        .reset_index(name="Number of Shows")
+        .sort_values("Date")
+    )
+
+    # Save to CSV
+    shows_per_day.to_csv(output_path, index=False)
+
+    print(f"Shows-per-day CSV saved to: {output_path}")
+
+    return shows_per_day
+
 def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
     """
     Generate a schedule for shows based on students, pods, and activity data.
@@ -292,6 +387,7 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
 
         # Estimate total shows required (rough) by avg pod capacity
         eligible_pods = eligible_pods_for_course(course)
+        print("eligible pods ",eligible_pods)
         caps = [p["capacity"] for p in eligible_pods] or [1]
         avg_cap = max(1, sum(caps) // len(caps))
         # At least 1 show. estimated_total_shows is how many shows roughly needed to meet seats_required
@@ -305,6 +401,15 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
         # track how many shows we've placed per day (across passes)
         day_shows_filled_map = {day.strftime("%Y-%m-%d"): 0 for day in day_list}
 
+        print("DEBUG: days (chronological):", [d.date().isoformat() for d in day_list])
+        print("DEBUG: weights:", weights)
+        print("DEBUG: eligible_pods caps:", [p['capacity'] for p in eligible_pods])
+        print("DEBUG: avg_cap (used):", avg_cap)
+        print("DEBUG: seats_required:", seats_required)
+        print("DEBUG: estimated_total_shows:", estimated_total_shows)
+        print("DEBUG: per_day_shows (list):", per_day_shows)
+        print("DEBUG: per_day_shows_map:", per_day_shows_map)
+
         # --- PASS 1: Distributed (Last to First) ---
         # Try to fill each day up to its calculated show count target
         for i, d in enumerate(reversed(days)):
@@ -315,6 +420,7 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
             day_key = d.strftime("%Y-%m-%d")
             # number of shows we should place on this day (weighted)
             day_shows_target = per_day_shows_map.get(day_key, 0)
+            # print(day_shows_target, "is target")
             day_shows_filled = day_shows_filled_map.get(day_key, 0)
             day_capacity_filled = 0
             
@@ -351,6 +457,7 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
                             "Pod": pod, "Pod Capacity": cap, "Show Length": show_len,
                         })
                         total_capacity += cap
+                        # print("cap is ",total_capacity, "for date", d)
                         shows_for_pair += 1
                         day_capacity_filled += cap
                         # increment by 1 show (not by seats) so we balance shows across buckets
@@ -479,31 +586,31 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
 # -----------------------------
 if __name__ == "__main__":
     # Example inputs — replace with parse_data() in production
-    STUDENTS = {"Bio 181": 600, "Bio 100": 1000}
+    # STUDENTS = {"Bio 100": 500}
     
-    DATA = [ 
-            ("Bio 100", "M1 A1", "Friday, January 16, 2026", "Wednesday, January 28, 2026"), 
-            # ("Bio 181", "M1 A1", "Friday, January 16, 2026", "Wednesday, January 28, 2026"), 
-            # ("CHM 113", "CHM M1 A1", "Tuesday, January 20, 2026", "Monday, February 2, 2026"), 
-            # ("Bio 100", "M1 A2", "Monday, January 26, 2026", "Wednesday, February 4, 2026"), 
-            # ("Bio 181", "M1 A2", "Monday, January 26, 2026", "Wednesday, February 4, 2026"), 
-            # ("Bio 182", "M4 A1", "Tuesday, January 27, 2026", "Thursday, February 5, 2026"), 
-            # ("Bio 100", "M1 A3", "Monday, February 2, 2026", "Wednesday, February 11, 2026"), 
-            # ("Bio 181", "M1 A3", "Monday, February 2, 2026", "Wednesday, February 11, 2026"), 
-            # ("CHM 114", "CHM M1 A1", "Monday, February 2, 2026", "Wednesday, February 11, 2026"), 
-        ]
+    # DATA = [ 
+    #         ("Bio 100", "M1 A1", "Friday, January 23, 2026", "Wednesday, January 28, 2026"), 
+    #         # ("Bio 181", "M1 A1", "Friday, January 16, 2026", "Wednesday, January 28, 2026"), 
+    #         # ("CHM 113", "CHM M1 A1", "Tuesday, January 20, 2026", "Monday, February 2, 2026"), 
+    #         # ("Bio 100", "M1 A2", "Monday, January 26, 2026", "Wednesday, February 4, 2026"), 
+    #         # ("Bio 181", "M1 A2", "Monday, January 26, 2026", "Wednesday, February 4, 2026"), 
+    #         # ("Bio 182", "M4 A1", "Tuesday, January 27, 2026", "Thursday, February 5, 2026"), 
+    #         # ("Bio 100", "M1 A3", "Monday, February 2, 2026", "Wednesday, February 11, 2026"), 
+    #         # ("Bio 181", "M1 A3", "Monday, February 2, 2026", "Wednesday, February 11, 2026"), 
+    #         # ("CHM 114", "CHM M1 A1", "Monday, February 2, 2026", "Wednesday, February 11, 2026"), 
+    #     ]
     
-    HOLIDAYS = [
-        datetime(2026, 1, 19).date(),  # Mon, 1/19/26
-        datetime(2026, 3, 9).date(),   # Mon, 3/9/26
-        datetime(2026, 3, 10).date(),  # Tue, 3/10/26
-        datetime(2026, 3, 11).date(),  # Wed, 3/11/26
-        datetime(2026, 3, 12).date(),  # Thu, 3/12/26
-        datetime(2026, 3, 13).date(),  # Fri, 3/13/26
-    ]
+    # HOLIDAYS = [
+    #     datetime(2026, 1, 19).date(),  # Mon, 1/19/26
+    #     datetime(2026, 3, 9).date(),   # Mon, 3/9/26
+    #     datetime(2026, 3, 10).date(),  # Tue, 3/10/26
+    #     datetime(2026, 3, 11).date(),  # Wed, 3/11/26
+    #     datetime(2026, 3, 12).date(),  # Thu, 3/12/26
+    #     datetime(2026, 3, 13).date(),  # Fri, 3/13/26
+    # ]
 
     # If you want to use parse_data(), uncomment:
-    # DATA, HOLIDAYS, STUDENTS = parse_data()
+    DATA, HOLIDAYS, STUDENTS = parse_data()
     
     # Call the schedule function
     schedule_df, summary_df = schedule(
@@ -511,6 +618,9 @@ if __name__ == "__main__":
         data=DATA,
         holidays=HOLIDAYS
     )
+
+    export_shows_per_day(schedule_df)
+    export_shows_per_hour(schedule_df)
     
     # Print outputs
     print("=== SHOW LENGTH MAPPING ===")
