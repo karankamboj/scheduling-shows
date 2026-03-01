@@ -34,7 +34,7 @@ BREAK_LEN = 10  # minutes break between different activities in same pod
 START_HOUR = time(9, 0)
 END_HOUR_REGULAR = time(17, 0)  # Regular closing time (Mon-Thu)
 END_HOUR_FRIDAY = time(13, 0)   # Early closing on Fridays (1 PM)
-STEP_MIN = 5  # 5-min grid
+STEP_MIN = 10  # 5-min grid
 
 XSL_PATH="/Users/karankamboj/Documents/Work/Scheduling/data.xlsx"
 

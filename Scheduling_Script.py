@@ -1,8 +1,6 @@
 import math
 from datetime import datetime, timedelta, time
 import pandas as pd
-import openpyxl
-from parse import parse_data
 
 # Import all constants from the centralized configuration file
 from constants import (
@@ -15,8 +13,7 @@ from constants import (
     START_HOUR,
     END_HOUR_REGULAR,
     END_HOUR_FRIDAY,
-    STEP_MIN,
-    XSL_PATH
+    STEP_MIN
 )
 from test_scheduling import run_all_tests
 # -----------------------------
@@ -31,10 +28,6 @@ def eligible_pods_for_course(course: str):
     if is_poly_course(course):
         return [p for p in PODS if p["pod"].strip().upper() == "POLY"]
     return [p for p in PODS if p["pod"].strip().upper() != "POLY"]
-
-def parse_sheet():
-    df = openpyxl.load_workbook(XSL_PATH)
-    ws = df["Spring 26 Highlevel and Academi"]
 
 def parse_date(s: str) -> datetime:
     return pd.to_datetime(s).to_pydatetime().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -79,8 +72,84 @@ def candidate_starts_for_date(date: datetime, show_len: int, step=STEP_MIN):
     start_m = minutes(START_HOUR)
     end_hour = get_end_hour_for_date(date)
     last_start = minutes(end_hour) - show_len
+    if last_start < start_m:
+        return []
     return list(range(start_m, last_start + 1, step))
 
+def make_bucket_targets(candidate_starts: list, total_seats_target: int, pods_for_course: list, by_shows: bool = True):
+    """
+    Return:
+      - pos_to_bucket(pos) -> bucket index
+      - bucket_targets -> list[int]
+
+    If by_shows=True, bucket_targets represent number of SHOWS allowed per bucket.
+    If by_shows=False, bucket_targets represent number of SEATS (legacy behavior).
+    """
+
+    if not candidate_starts:
+        return lambda pos: 0, [0]
+
+    # capacities for pods that can run this course
+    caps = [p["capacity"] for p in pods_for_course] or [1]
+    min_cap = min(caps)
+    avg_cap = max(1, sum(caps) // len(caps))
+
+    # --- FIXED BEHAVIOR ---
+    # When balancing by shows, choose number of buckets B based on the number
+    # of shows we actually want to place (total_seats_target in this call will be
+    # the day_shows_target or remaining_shows). This prevents collapsing to B=1.
+    # total_seats_target represents the number of shows we aim to place here.
+    desired_shows = max(1, int(total_seats_target))
+    # number of buckets should be at most the number of candidate slots,
+    # and at most desired_shows (one bucket per show is reasonable).
+    B = min(len(candidate_starts), desired_shows)
+
+    # optional cap to avoid too many buckets (tweakable)
+    B = max(1, min(B, 12))
+
+    # distribute the target (shows or seats) across B buckets evenly
+    if by_shows:
+        total_target = max(1, int(total_seats_target))
+    else:
+        total_target = total_seats_target
+
+    base = total_target // B
+    rem = total_target % B
+    bucket_targets = [base + (1 if i < rem else 0) for i in range(B)]
+
+    def pos_to_bucket(pos: int) -> int:
+        # Uniform mapping of positions into buckets (earliest slots -> bucket 0)
+        # pos is 0..len(candidate_starts)-1
+        return (pos * B) // len(candidate_starts)
+
+    return pos_to_bucket, bucket_targets
+
+def distribute_proportional_counts(weights: list, total: int) -> list:
+    """
+    Distribute `total` integer units across positions proportional to `weights[]`.
+    Uses largest-remainder (Hamilton) method.
+    """
+    n = len(weights)
+    if n == 0:
+        return []
+    if total <= 0:
+        return [0] * n
+
+    W = sum(weights)
+    if W == 0:
+        base = total // n
+        rem = total % n
+        return [base + (1 if i < rem else 0) for i in range(n)]
+
+    raw = [ (total * w) / W for w in weights ]
+    floors = [int(math.floor(r)) for r in raw]
+    rem = total - sum(floors)
+    # fractional parts with index
+    fractions = sorted(enumerate([r - f for r, f in zip(raw, floors)]), key=lambda x: -x[1])
+    for idx in range(rem):
+        i = fractions[idx][0]
+        floors[i] += 1
+    return floors
 
 def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
     """
@@ -108,7 +177,7 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
         summary_df: DataFrame containing summary with columns:
             Course, Mod/Act, Students, Buffer%, Seats Required, Scheduled Seats, Shows Scheduled, Show Length, Open, Close
     """
-    
+
     # -----------------------------
     # STATE (internal to function)
     # -----------------------------
@@ -153,11 +222,11 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
                     if not (end_min <= existing_start or start_min >= existing_end):
                         return False
                 else:
-                    # Different activity: need 10-minute break
-                    # Check if new show starts within 10 mins after existing show ends
+                    # Different activity: need BREAK_LEN minute break
+                    # Check if new show starts within BREAK_LEN mins after existing show ends
                     if start_min < existing_end + BREAK_LEN and end_min > existing_start:
                         return False
-                    # Check if existing show starts within 10 mins after new show ends
+                    # Check if existing show starts within BREAK_LEN mins after new show ends
                     if existing_start < end_min + BREAK_LEN and existing_end > start_min:
                         return False
         
@@ -214,34 +283,68 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
         total_capacity = 0
         shows_for_pair = 0
         
-        # Calculate weights for Pass 1 (1 to N)
+        # -----------------------------
+        # Weighted per-day show targets
+        # -----------------------------
+        # number of days and weights 1..N
         num_days = len(days)
-        total_weight = sum(range(1, num_days + 1))
-        
-        # --- PASS 1: Distributed (First to Last) ---
-        # Try to fill each day up to its calculated target seat count
+        weights = list(range(1, num_days + 1))  # day1 weight=1 ... dayN weight=num_days
+
+        # Estimate total shows required (rough) by avg pod capacity
+        eligible_pods = eligible_pods_for_course(course)
+        caps = [p["capacity"] for p in eligible_pods] or [1]
+        avg_cap = max(1, sum(caps) // len(caps))
+        # At least 1 show. estimated_total_shows is how many shows roughly needed to meet seats_required
+        estimated_total_shows = max(1, math.ceil(seats_required / avg_cap))
+
+        # compute integer per-day show targets proportional to weights
+        per_day_shows = distribute_proportional_counts(weights, estimated_total_shows)
+        # map day_key -> show target; days is chronological ascending
+        day_list = days[:]  # chronological
+        per_day_shows_map = {day_list[idx].strftime("%Y-%m-%d"): per_day_shows[idx] for idx in range(len(day_list))}
+        # track how many shows we've placed per day (across passes)
+        day_shows_filled_map = {day.strftime("%Y-%m-%d"): 0 for day in day_list}
+
+        # --- PASS 1: Distributed (Last to First) ---
+        # Try to fill each day up to its calculated show count target
         for i, d in enumerate(reversed(days)):
             if total_capacity >= seats_required:
                 break
                 
-            day_weight = num_days - i
-            daily_target = math.ceil((day_weight / total_weight) * seats_required)
+            # note: loop order is reversed(days) to preserve your original ordering logic
+            day_key = d.strftime("%Y-%m-%d")
+            # number of shows we should place on this day (weighted)
+            day_shows_target = per_day_shows_map.get(day_key, 0)
+            day_shows_filled = day_shows_filled_map.get(day_key, 0)
             day_capacity_filled = 0
             
-            day_key = d.strftime("%Y-%m-%d")
             candidate_starts = candidate_starts_for_date(d, show_len)
-            
-            for start_min in candidate_starts:
-                if total_capacity >= seats_required or day_capacity_filled >= daily_target:
+            if not candidate_starts:
+                continue
+
+            # Prepare pods and bucket targets — use show-count balancing (by_shows=True)
+            pods_for_course = eligible_pods_for_course(course)
+            # Use bucket targets sized to the day's show target (or at least 1)
+            pos_to_bucket, bucket_targets = make_bucket_targets(candidate_starts, max(1, day_shows_target), pods_for_course, by_shows=True)
+            # bucket_filled counts number of SHOWS placed into each bucket
+            bucket_filled = [0] * len(bucket_targets)
+
+            for pos_idx, start_min in enumerate(candidate_starts):
+                if total_capacity >= seats_required or day_shows_filled >= day_shows_target:
                     break
-                
+
+                bucket_idx = pos_to_bucket(pos_idx)
+                # if this bucket already reached its show target, skip this start
+                if bucket_filled[bucket_idx] >= bucket_targets[bucket_idx]:
+                    continue
+
                 for podinfo in pods_sorted_for_slot(course):
                     pod, cap, grp = podinfo["pod"], podinfo["capacity"], podinfo["ops_group"]
-                    
+
                     if can_place(day_key, pod, grp, start_min, course, mod, d, show_len):
                         place(day_key, pod, grp, start_min, course, mod, show_len)
                         start_t, end_t = time_from_minutes(start_min), time_from_minutes(start_min + show_len)
-                        
+
                         schedule_rows.append({
                             "Course": course, "Mod/Act": mod, "Date": day_key,
                             "Start": start_t.strftime("%H:%M"), "End": end_t.strftime("%H:%M"),
@@ -250,29 +353,52 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
                         total_capacity += cap
                         shows_for_pair += 1
                         day_capacity_filled += cap
+                        # increment by 1 show (not by seats) so we balance shows across buckets
+                        bucket_filled[bucket_idx] += 1
+                        day_shows_filled += 1
+                        day_shows_filled_map[day_key] = day_shows_filled
                         break
 
         # --- PASS 2: Catch-up (Last to First) ---
-        # If still need more seats, fill remaining starting from the end
+        # If still need more seats, try to place additional shows:
         if total_capacity < seats_required:
+
+            # First attempt: place the remaining targeted shows per day (if any), iterating last->first
             for d in reversed(days):
                 if total_capacity >= seats_required:
                     break
-                    
+
                 day_key = d.strftime("%Y-%m-%d")
+                allowed_shows_on_day = max(0, per_day_shows_map.get(day_key, 0) - day_shows_filled_map.get(day_key, 0))
+                if allowed_shows_on_day <= 0:
+                    continue
+
                 candidate_starts = candidate_starts_for_date(d, show_len)
-                
-                for start_min in candidate_starts:
-                    if total_capacity >= seats_required:
+                if not candidate_starts:
+                    continue
+
+                pods_for_course = eligible_pods_for_course(course)
+                # bucket targets sized to allowed_shows_on_day
+                pos_to_bucket, bucket_targets = make_bucket_targets(candidate_starts, max(1, allowed_shows_on_day), pods_for_course, by_shows=True)
+                bucket_filled = [0] * len(bucket_targets)
+
+                day_shows_filled = day_shows_filled_map.get(day_key, 0)
+
+                for pos_idx, start_min in enumerate(candidate_starts):
+                    if total_capacity >= seats_required or day_shows_filled >= per_day_shows_map.get(day_key, 0):
                         break
-                    
-                    for podinfo in pods_sorted_for_slot():
+
+                    bucket_idx = pos_to_bucket(pos_idx)
+                    if bucket_filled[bucket_idx] >= bucket_targets[bucket_idx]:
+                        continue
+
+                    for podinfo in pods_sorted_for_slot(course):
                         pod, cap, grp = podinfo["pod"], podinfo["capacity"], podinfo["ops_group"]
-                        
+
                         if can_place(day_key, pod, grp, start_min, course, mod, d, show_len):
                             place(day_key, pod, grp, start_min, course, mod, show_len)
                             start_t, end_t = time_from_minutes(start_min), time_from_minutes(start_min + show_len)
-                            
+
                             schedule_rows.append({
                                 "Course": course, "Mod/Act": mod, "Date": day_key,
                                 "Start": start_t.strftime("%H:%M"), "End": end_t.strftime("%H:%M"),
@@ -280,7 +406,46 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
                             })
                             total_capacity += cap
                             shows_for_pair += 1
+                            bucket_filled[bucket_idx] += 1
+                            day_shows_filled += 1
+                            day_shows_filled_map[day_key] = day_shows_filled
                             break
+
+            # --- PASS 3: Catch-up (Last to First)
+            # Second attempt if still short on seats: allow extra shows (seat-driven) ignoring per-day show caps
+            if total_capacity < seats_required:
+                for d in reversed(days):
+                    if total_capacity >= seats_required:
+                        break
+
+                    day_key = d.strftime("%Y-%m-%d")
+                    candidate_starts = candidate_starts_for_date(d, show_len)
+                    if not candidate_starts:
+                        continue
+
+                    pods_for_course = eligible_pods_for_course(course)
+
+                    for pos_idx, start_min in enumerate(candidate_starts):
+                        if total_capacity >= seats_required:
+                            break
+
+                        # do not restrict by show count here; allow any placements that fit
+                        for podinfo in pods_sorted_for_slot(course):
+                            pod, cap, grp = podinfo["pod"], podinfo["capacity"], podinfo["ops_group"]
+
+                            if can_place(day_key, pod, grp, start_min, course, mod, d, show_len):
+                                place(day_key, pod, grp, start_min, course, mod, show_len)
+                                start_t, end_t = time_from_minutes(start_min), time_from_minutes(start_min + show_len)
+
+                                schedule_rows.append({
+                                    "Course": course, "Mod/Act": mod, "Date": day_key,
+                                    "Start": start_t.strftime("%H:%M"), "End": end_t.strftime("%H:%M"),
+                                    "Pod": pod, "Pod Capacity": cap, "Show Length": show_len,
+                                })
+                                total_capacity += cap
+                                shows_for_pair += 1
+                                day_shows_filled_map[day_key] = day_shows_filled_map.get(day_key, 0) + 1
+                                break
         
         if total_capacity < seats_required:
             raise ValueError(
@@ -313,31 +478,32 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
 # EXAMPLE USAGE / MAIN EXECUTION
 # -----------------------------
 if __name__ == "__main__":
-    # Define inputs
-    # STUDENTS = {"Bio 181": 576, "Bio 100": 350}
+    # Example inputs — replace with parse_data() in production
+    STUDENTS = {"Bio 181": 600, "Bio 100": 1000}
     
-    # DATA = [
-    #     ("Bio 100", "M1 A1", "Friday, January 16, 2026", "Wednesday, January 28, 2026"),
-    #     ("Bio 181", "M1 A1", "Friday, January 16, 2026", "Wednesday, January 28, 2026"),
-    #     ("CHM 113", "CHM M1 A1", "Tuesday, January 20, 2026", "Monday, February 2, 2026"),
-    #     ("Bio 100", "M1 A2", "Monday, January 26, 2026", "Wednesday, February 4, 2026"),
-    #     ("Bio 181", "M1 A2", "Monday, January 26, 2026", "Wednesday, February 4, 2026"),
-    #     ("Bio 182", "M4 A1", "Tuesday, January 27, 2026", "Thursday, February 5, 2026"),
-    #     ("Bio 100", "M1 A3", "Monday, February 2, 2026", "Wednesday, February 11, 2026"),
-    #     ("Bio 181", "M1 A3", "Monday, February 2, 2026", "Wednesday, February 11, 2026"),
-    #     ("CHM 114", "CHM M1 A1", "Monday, February 2, 2026", "Wednesday, February 11, 2026"),
-    # ]
+    DATA = [ 
+            ("Bio 100", "M1 A1", "Friday, January 16, 2026", "Wednesday, January 28, 2026"), 
+            # ("Bio 181", "M1 A1", "Friday, January 16, 2026", "Wednesday, January 28, 2026"), 
+            # ("CHM 113", "CHM M1 A1", "Tuesday, January 20, 2026", "Monday, February 2, 2026"), 
+            # ("Bio 100", "M1 A2", "Monday, January 26, 2026", "Wednesday, February 4, 2026"), 
+            # ("Bio 181", "M1 A2", "Monday, January 26, 2026", "Wednesday, February 4, 2026"), 
+            # ("Bio 182", "M4 A1", "Tuesday, January 27, 2026", "Thursday, February 5, 2026"), 
+            # ("Bio 100", "M1 A3", "Monday, February 2, 2026", "Wednesday, February 11, 2026"), 
+            # ("Bio 181", "M1 A3", "Monday, February 2, 2026", "Wednesday, February 11, 2026"), 
+            # ("CHM 114", "CHM M1 A1", "Monday, February 2, 2026", "Wednesday, February 11, 2026"), 
+        ]
     
-    # HOLIDAYS = [
-    #     datetime(2026, 1, 19).date(),  # Mon, 1/19/26
-    #     datetime(2026, 3, 9).date(),   # Mon, 3/9/26
-    #     datetime(2026, 3, 10).date(),  # Tue, 3/10/26
-    #     datetime(2026, 3, 11).date(),  # Wed, 3/11/26
-    #     datetime(2026, 3, 12).date(),  # Thu, 3/12/26
-    #     datetime(2026, 3, 13).date(),  # Fri, 3/13/26
-    # ]
+    HOLIDAYS = [
+        datetime(2026, 1, 19).date(),  # Mon, 1/19/26
+        datetime(2026, 3, 9).date(),   # Mon, 3/9/26
+        datetime(2026, 3, 10).date(),  # Tue, 3/10/26
+        datetime(2026, 3, 11).date(),  # Wed, 3/11/26
+        datetime(2026, 3, 12).date(),  # Thu, 3/12/26
+        datetime(2026, 3, 13).date(),  # Fri, 3/13/26
+    ]
 
-    DATA, HOLIDAYS, STUDENTS = parse_data()
+    # If you want to use parse_data(), uncomment:
+    # DATA, HOLIDAYS, STUDENTS = parse_data()
     
     # Call the schedule function
     schedule_df, summary_df = schedule(
