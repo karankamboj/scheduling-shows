@@ -246,6 +246,30 @@ def export_shows_per_day(schedule_df: pd.DataFrame, output_path: str = "output/s
 
     return shows_per_day
 
+def export_shows_per_pod(schedule_df: pd.DataFrame,
+                         output_path: str = "output/shows_per_pod.csv"):
+    """
+    Generate CSV and DataFrame with number of shows scheduled on each pod,
+    plus total seats (sum of pod capacities used).
+    """
+    if schedule_df.empty:
+        pod_summary = pd.DataFrame(columns=["Pod", "Shows Scheduled", "Total Seats"])
+    else:
+        pod_summary = (
+            schedule_df
+            .groupby("Pod", as_index=False)
+            .agg(**{
+                "Shows Scheduled": ("Pod", "size"),
+                "Total Seats": ("Pod Capacity", "sum")
+            })
+            .sort_values("Shows Scheduled", ascending=False)
+            .reset_index(drop=True)
+        )
+
+    pod_summary.to_csv(output_path, index=False)
+    print(f"Shows-per-pod CSV saved to: {output_path}")
+    return pod_summary
+
 def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
     """
     Generate a schedule for shows based on students, pods, and activity data.
@@ -621,6 +645,7 @@ if __name__ == "__main__":
 
     export_shows_per_day(schedule_df)
     export_shows_per_hour(schedule_df)
+    export_shows_per_pod(schedule_df)
     
     # Print outputs
     print("=== SHOW LENGTH MAPPING ===")
