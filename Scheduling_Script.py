@@ -51,11 +51,11 @@ def get_show_length(course: str) -> int:
 def business_days_inclusive(start: datetime, end: datetime, holidays: list):
     """Get business days (Mon-Fri) excluding holidays."""
     days = []
-    d = start
-    while d <= end:
-        if d.weekday() < 5 and not is_holiday(d, holidays):  # Mon-Fri only, no holidays
-            days.append(d)
-        d += timedelta(days=1)
+    current_day = start
+    while current_day <= end:
+        if current_day.weekday() < 5 and not is_holiday(current_day, holidays):  # Mon-Fri only, no holidays
+            days.append(current_day)
+        current_day += timedelta(days=1)
     return days
 
 def minutes(t: time) -> int:
@@ -94,37 +94,38 @@ def make_bucket_targets(candidate_starts: list, total_seats_target: int, pods_fo
         return lambda pos: 0, [0]
 
     # capacities for pods that can run this course
-    caps = [p["capacity"] for p in pods_for_course] or [1]
-    min_cap = min(caps)
-    avg_cap = max(1, sum(caps) // len(caps))
+    pod_capacities = [p["capacity"] for p in pods_for_course] or [1]
+    min_capacity = min(pod_capacities)
+    avg_capacity = max(1, sum(pod_capacities) // len(pod_capacities))
 
     # --- FIXED BEHAVIOR ---
-    # When balancing by shows, choose number of buckets B based on the number
+    # When balancing by shows, choose number of buckets bucket_count based on the number
     # of shows we actually want to place (total_seats_target in this call will be
-    # the day_shows_target or remaining_shows). This prevents collapsing to B=1.
+    # the day_shows_target or remaining_shows). This prevents collapsing to bucket_count=1.
     # total_seats_target represents the number of shows we aim to place here.
     desired_shows = max(1, int(total_seats_target))
+    num_candidate_positions = len(candidate_starts)
     # number of buckets should be at most the number of candidate slots,
     # and at most desired_shows (one bucket per show is reasonable).
-    B = min(len(candidate_starts), desired_shows)
+    bucket_count = min(num_candidate_positions, desired_shows)
 
     # optional cap to avoid too many buckets (tweakable)
-    B = max(1, min(B, 12))
+    bucket_count = max(1, min(bucket_count, 12))
 
-    # distribute the target (shows or seats) across B buckets evenly
+    # distribute the target (shows or seats) across bucket_count buckets evenly
     if by_shows:
         total_target = max(1, int(total_seats_target))
     else:
         total_target = total_seats_target
 
-    base = total_target // B
-    rem = total_target % B
-    bucket_targets = [base + (1 if i < rem else 0) for i in range(B)]
+    base_target = total_target // bucket_count
+    remainder_target = total_target % bucket_count
+    bucket_targets = [base_target + (1 if index < remainder_target else 0) for index in range(bucket_count)]
 
     def pos_to_bucket(pos: int) -> int:
         # Uniform mapping of positions into buckets (earliest slots -> bucket 0)
         # pos is 0..len(candidate_starts)-1
-        return (pos * B) // len(candidate_starts)
+        return (pos * bucket_count) // num_candidate_positions
 
     return pos_to_bucket, bucket_targets
 
@@ -133,27 +134,31 @@ def distribute_proportional_counts(weights: list, total: int) -> list:
     Distribute `total` integer units across positions proportional to `weights[]`.
     Uses largest-remainder (Hamilton) method.
     """
-    n = len(weights)
-    if n == 0:
+    weight_count = len(weights)
+    if weight_count == 0:
         return []
     if total <= 0:
-        return [0] * n
+        return [0] * weight_count
 
-    W = sum(weights)
-    if W == 0:
-        base = total // n
-        rem = total % n
-        return [base + (1 if i < rem else 0) for i in range(n)]
+    weight_sum = sum(weights)
+    if weight_sum == 0:
+        base_share = total // weight_count
+        remainder_share = total % weight_count
+        return [base_share + (1 if idx < remainder_share else 0) for idx in range(weight_count)]
 
-    raw = [ (total * w) / W for w in weights ]
-    floors = [int(math.floor(r)) for r in raw]
-    rem = total - sum(floors)
+    # raw allocation (float)
+    raw_allocations = [ (total * w) / weight_sum for w in weights ]
+    floor_allocations = [int(math.floor(r)) for r in raw_allocations]
+    remainder_units = total - sum(floor_allocations)
     # fractional parts with index
-    fractions = sorted(enumerate([r - f for r, f in zip(raw, floors)]), key=lambda x: -x[1])
-    for idx in range(rem):
-        i = fractions[idx][0]
-        floors[i] += 1
-    return floors
+    fraction_with_index = sorted(
+        enumerate([r - f for r, f in zip(raw_allocations, floor_allocations)]),
+        key=lambda pair: -pair[1]
+    )
+    for pick_index in range(remainder_units):
+        chosen_position = fraction_with_index[pick_index][0]
+        floor_allocations[chosen_position] += 1
+    return floor_allocations
 
 def export_shows_per_hour(schedule_df: pd.DataFrame,
                           output_path: str = "output/shows_per_hour.csv"):
@@ -287,38 +292,38 @@ def interleaved_positions_by_bucket(candidate_starts: list, pos_to_bucket):
     """
     # group positions by bucket preserving ascending order
     buckets = {}
-    for pos_idx, _m in enumerate(candidate_starts):
-        b = pos_to_bucket(pos_idx)
-        buckets.setdefault(b, []).append(pos_idx)
+    for position_index, _slot in enumerate(candidate_starts):
+        bucket_id = pos_to_bucket(position_index)
+        buckets.setdefault(bucket_id, []).append(position_index)
 
     # build in/out sequence per bucket
     bucket_queues = {}
-    for b, pos_list in buckets.items():
-        left = 0
-        right = len(pos_list) - 1
+    for bucket_id, position_list in buckets.items():
+        left_pointer = 0
+        right_pointer = len(position_list) - 1
         order = []
-        take_left = True
-        while left <= right:
-            if take_left:
-                order.append(pos_list[left])
-                left += 1
+        take_left_flag = True
+        while left_pointer <= right_pointer:
+            if take_left_flag:
+                order.append(position_list[left_pointer])
+                left_pointer += 1
             else:
-                order.append(pos_list[right])
-                right -= 1
-            take_left = not take_left
-        bucket_queues[b] = deque(order)
+                order.append(position_list[right_pointer])
+                right_pointer -= 1
+            take_left_flag = not take_left_flag
+        bucket_queues[bucket_id] = deque(order)
 
     # round-robin across buckets in ascending bucket index order
     result = []
-    for b in sorted(bucket_queues.keys()):
-        pass  # ensure buckets exist in sorted order (no-op)
+    for bucket_index in sorted(bucket_queues.keys()):
+        pass  # ensure ordered iteration (no-op)
     while True:
-        added = False
-        for b in sorted(bucket_queues.keys()):
-            if bucket_queues[b]:
-                result.append(bucket_queues[b].popleft())
-                added = True
-        if not added:
+        added_any = False
+        for bucket_index in sorted(bucket_queues.keys()):
+            if bucket_queues[bucket_index]:
+                result.append(bucket_queues[bucket_index].popleft())
+                added_any = True
+        if not added_any:
             break
     return result
 
@@ -390,10 +395,10 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
             return False
 
         # pod booking conflicts
-        for (d, p, existing_start), details in all_bookings.items():
-            if d != day_key or p != pod:
+        for (booking_day, booking_pod, existing_start), details in all_bookings.items():
+            if booking_day != day_key or booking_pod != pod:
                 continue
-            existing_course, existing_mod_act, existing_end, _ = details
+            existing_course, existing_mod_act, existing_end, _existing_len = details
             same_activity = (existing_course == course and existing_mod_act == mod_act)
 
             if same_activity:
@@ -531,11 +536,11 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
     # -----------------------------
     # MAIN LOOP: iterate each (course, mod)
     # -----------------------------
-    for _, w in windows.iterrows():
-        course = w["Course"]
-        mod_act = w["Mod/Act"]
-        open_dt = w["open_date"]
-        close_dt = w["close_date"]
+    for _, window_row in windows.iterrows():
+        course = window_row["Course"]
+        mod_act = window_row["Mod/Act"]
+        open_dt = window_row["open_date"]
+        close_dt = window_row["close_date"]
 
         # Student seats required (with buffer)
         student_count = students.get(course, DEFAULT_STUDENTS_OTHER)
@@ -564,7 +569,7 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
 
         # Map date -> per-day target and initialize filled counters
         day_list = days[:]  # chronological ascending
-        per_day_shows_map = {day_list[i].strftime("%Y-%m-%d"): per_day_shows[i] for i in range(len(day_list))}
+        per_day_shows_map = {day.strftime("%Y-%m-%d"): per_day_shows[idx] for idx, day in enumerate(day_list)}
         day_shows_filled_map = {day.strftime("%Y-%m-%d"): 0 for day in day_list}
 
         # Debug prints preserved from original
@@ -602,13 +607,17 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
         # PASS 2: Catch-up pass — try remaining per-day targets (last->first)
         # -----------------------------
         if total_capacity < seats_required:
+
+            # First attempt: place the remaining targeted shows per day (if any), iterating first->last
             for day_dt in reversed(days):
                 if total_capacity >= seats_required:
                     break
+
                 day_key = day_dt.strftime("%Y-%m-%d")
-                remaining_allowed = max(0, per_day_shows_map.get(day_key, 0) - day_shows_filled_map.get(day_key, 0))
-                if remaining_allowed <= 0:
+                allowed_shows_on_day = max(0, per_day_shows_map.get(day_key, 0) - day_shows_filled_map.get(day_key, 0))
+                if allowed_shows_on_day <= 0:
                     continue
+
                 total_capacity, shows_for_pair = place_shows_on_day(
                     day_dt=day_dt,
                     course=course,
@@ -617,12 +626,12 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
                     seats_needed=seats_required,
                     current_capacity=total_capacity,
                     shows_count=shows_for_pair,
-                    day_show_target=remaining_allowed,
+                    day_show_target=allowed_shows_on_day,
                     day_shows_filled_map=day_shows_filled_map,
                     enforce_bucket_limits=True
                 )
 
-        # -----------------------------
+        # --- PASS 3: Catch-up (Last to First)
         # PASS 3: Seat-driven pass — place any remaining seats ignoring per-day caps (last->first)
         # -----------------------------
         if total_capacity < seats_required:
@@ -662,13 +671,12 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
             "Open": open_dt.date().isoformat(),
             "Close": close_dt.date().isoformat(),
         })
-
+    
     # -----------------------------
-    # OUTPUT DATAFRAMES
+    # CREATE OUTPUT DATAFRAMES
     # -----------------------------
     schedule_df = pd.DataFrame(schedule_rows).sort_values(["Date", "Start", "Pod"]).reset_index(drop=True)
     summary_df = pd.DataFrame(summary_rows).sort_values(["Course", "Mod/Act"]).reset_index(drop=True)
-
     return schedule_df, summary_df
 
 
