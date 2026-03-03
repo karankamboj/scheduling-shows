@@ -270,6 +270,57 @@ def export_shows_per_pod(schedule_df: pd.DataFrame,
     print(f"Shows-per-pod CSV saved to: {output_path}")
     return pod_summary
 
+from collections import deque
+
+def interleaved_positions_by_bucket(candidate_starts: list, pos_to_bucket):
+    """
+    Produce a list of candidate position indices (0..len(candidate_starts)-1)
+    with the following behavior:
+      - Group positions by bucket (pos_to_bucket).
+      - For each bucket, create an in/out sequence: [first, last, second, second_last, ...]
+      - Finally, round-robin across buckets: take the next item from bucket0, then bucket1, ...
+        and repeat until all are exhausted.
+
+    This yields: spread across buckets, and within each bucket picks earliest, latest,
+    then next-earliest, next-latest, etc.
+    """
+    # group positions by bucket preserving ascending order
+    buckets = {}
+    for pos_idx, _m in enumerate(candidate_starts):
+        b = pos_to_bucket(pos_idx)
+        buckets.setdefault(b, []).append(pos_idx)
+
+    # build in/out sequence per bucket
+    bucket_queues = {}
+    for b, pos_list in buckets.items():
+        left = 0
+        right = len(pos_list) - 1
+        order = []
+        take_left = True
+        while left <= right:
+            if take_left:
+                order.append(pos_list[left])
+                left += 1
+            else:
+                order.append(pos_list[right])
+                right -= 1
+            take_left = not take_left
+        bucket_queues[b] = deque(order)
+
+    # round-robin across buckets in ascending bucket index order
+    result = []
+    for b in sorted(bucket_queues.keys()):
+        pass  # ensure buckets exist in sorted order (no-op)
+    while True:
+        added = False
+        for b in sorted(bucket_queues.keys()):
+            if bucket_queues[b]:
+                result.append(bucket_queues[b].popleft())
+                added = True
+        if not added:
+            break
+    return result
+
 def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
     """
     Generate a schedule for shows based on students, pods, and activity data.
@@ -459,7 +510,9 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
             # bucket_filled counts number of SHOWS placed into each bucket
             bucket_filled = [0] * len(bucket_targets)
 
-            for pos_idx, start_min in enumerate(candidate_starts):
+            pos_order = interleaved_positions_by_bucket(candidate_starts, pos_to_bucket)
+            for pos_idx in pos_order:
+                start_min = candidate_starts[pos_idx]
                 if total_capacity >= seats_required or day_shows_filled >= day_shows_target:
                     break
 
@@ -490,11 +543,11 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
                         day_shows_filled_map[day_key] = day_shows_filled
                         break
 
-        # --- PASS 2: Catch-up (Last to First) ---
+        # --- PASS 2: Catch-up (first to last) ---
         # If still need more seats, try to place additional shows:
         if total_capacity < seats_required:
 
-            # First attempt: place the remaining targeted shows per day (if any), iterating last->first
+            # First attempt: place the remaining targeted shows per day (if any), iterating first->last
             for d in reversed(days):
                 if total_capacity >= seats_required:
                     break
@@ -514,8 +567,9 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
                 bucket_filled = [0] * len(bucket_targets)
 
                 day_shows_filled = day_shows_filled_map.get(day_key, 0)
-
-                for pos_idx, start_min in enumerate(candidate_starts):
+                pos_order = interleaved_positions_by_bucket(candidate_starts, pos_to_bucket)
+                for pos_idx in pos_order:
+                    start_min = candidate_starts[pos_idx]
                     if total_capacity >= seats_required or day_shows_filled >= per_day_shows_map.get(day_key, 0):
                         break
 
@@ -556,7 +610,7 @@ def schedule(students: dict, data: list, holidays: list) -> pd.DataFrame:
 
                     pods_for_course = eligible_pods_for_course(course)
 
-                    for pos_idx, start_min in enumerate(candidate_starts):
+                    for start_min in candidate_starts:
                         if total_capacity >= seats_required:
                             break
 
